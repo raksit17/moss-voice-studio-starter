@@ -12,7 +12,8 @@ import {
   type Health, type Job, type Voice, createJob, createVoice,
   deleteVoice, getAudio, getHealth, getJobs, getVoices,
   getStreamStatus, streamSpeech, type StreamStatus,
-  type GenerationSettings,
+  type GenerationSettings, type SavedModel, type ModelRuntime, getModels, getModelRuntime,
+  importModel, activateModel, loadModel, unloadModel, validateModel,
 } from './api'
 import { playPcmResponse } from './pcm-player'
 
@@ -22,6 +23,13 @@ const sidebarOpen = ref(false)
 const health = ref<Health | null>(null)
 const online = ref(false)
 const voices = ref<Voice[]>([])
+const savedModels = ref<SavedModel[]>([])
+const modelRuntime = ref<ModelRuntime | null>(null)
+const selectedModel = ref('')
+const importName = ref('')
+const importPath = ref('')
+const importPrecision = ref('bf16')
+const modelBusy = ref(false)
 const jobs = ref<Job[]>([])
 const selectedVoice = ref('')
 const language = ref<'Thai' | 'English'>('Thai')
@@ -79,7 +87,10 @@ function navigate(next: Page) {
 }
 async function refresh() {
   try {
-    const [h, vs, js, st] = await Promise.all([getHealth(), getVoices(), getJobs(), getStreamStatus()])
+    const [h, vs, js, st, ms, rt] = await Promise.all([getHealth(), getVoices(), getJobs(), getStreamStatus(), getModels(), getModelRuntime()])
+    savedModels.value = ms
+    modelRuntime.value = rt
+    if (!selectedModel.value || !ms.some(m => m.id === selectedModel.value)) selectedModel.value = ms.find(m => m.is_default)?.id || ''
     liveStatus.value = st
     health.value = h
     voices.value = vs
@@ -94,7 +105,7 @@ async function generate() {
   if (!text.value.trim()) return alertMessage('กรุณาพิมพ์ข้อความก่อนสร้างเสียง', 'error')
   creating.value = true
   try {
-    const job = await createJob(text.value.trim(), language.value, selectedVoice.value || null, generationSettings())
+    const job = await createJob(text.value.trim(), language.value, selectedVoice.value || null, generationSettings(), selectedModel.value)
     activeJobId.value = job.id
     alertMessage('ส่งงานเข้า Voice Engine แล้ว — ดูสถานะได้ในรายการด้านล่าง')
     await refresh()
@@ -103,6 +114,25 @@ async function generate() {
   } finally {
     creating.value = false
   }
+}
+async function modelAction(action: 'load' | 'unload' | 'activate' | 'validate' | 'import') {
+  modelBusy.value = true
+  try {
+    if (action === 'import') {
+      const added = await importModel(importName.value, importPath.value, importPrecision.value)
+      selectedModel.value = added.id
+      importName.value = ''; importPath.value = ''
+    } else {
+      if (!selectedModel.value) throw new Error('Select a saved model')
+      if (action === 'load') await loadModel(selectedModel.value)
+      if (action === 'unload') await unloadModel(selectedModel.value)
+      if (action === 'activate') await activateModel(selectedModel.value)
+      if (action === 'validate') await validateModel(selectedModel.value)
+    }
+    await refresh()
+    alertMessage('Model operation completed')
+  } catch(e) { alertMessage((e as Error).message, 'error') }
+  finally { modelBusy.value = false }
 }
 function generationSettings(): GenerationSettings {
   return { temperature: temperature.value, top_p: topP.value, top_k: topK.value }
@@ -256,6 +286,7 @@ onUnmounted(() => {
             <div class="stat-card"><div class="stat-icon blue"><Cpu :size="19"/></div><div><small>Voice Engine</small><strong class="small-stat">{{ health?.engine === 'ready' ? 'Ready' : health?.engine === 'loading' ? 'Loading' : online ? 'Standby' : 'Offline' }}</strong><span>{{ health?.device || 'Not connected' }}</span></div></div>
           </div>
 
+          <section class="panel details-panel" style="margin-bottom:18px"><label class="modal-label">Generation Model</label><select class="modal-input" v-model="selectedModel"><option v-for="m in savedModels.filter(x=>x.status==='ready')" :key="m.id" :value="m.id">{{ m.name }} ({{ m.precision.toUpperCase() }})</option></select><p class="section-desc">Model selection applies to this job. Default remains unchanged unless set in Model Manager.</p></section>
           <div class="studio-grid">
             <section class="panel editor-panel">
               <div class="panel-heading"><div><span class="panel-kicker">01 / CREATE</span><h2><WandSparkles :size="19" class="heading-icon"/> Text to Speech</h2><p>พิมพ์ข้อความที่คุณต้องการให้ AI พูด</p></div><div class="pill"><span class="pill-dot"></span> Local Inference</div></div>
@@ -299,7 +330,33 @@ onUnmounted(() => {
 
         <template v-if="page === 'history'"><div class="page-header"><div><div class="eyebrow"><Clock3 :size="14"/> AUDIO OUTPUTS</div><h1>Generation <em>History.</em></h1><p>ตรวจสถานะงานย้อนหลัง เล่น และดาวน์โหลดไฟล์เสียงที่สร้างไว้</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Refresh</button></div><div class="panel library-panel"><div class="results-heading"><h2><Headphones :size="20" class="heading-icon"/> Recent jobs</h2><span class="waiting-tag">{{ historyJobs.length }} records</span></div><div v-if="historyJobs.length" class="job-list"><div v-for="job in historyJobs" :key="job.id" class="job-item"><div class="job-icon"><FileAudio :size="20"/></div><div class="job-info"><strong>{{ job.text }}</strong><span>{{ job.language }} · {{ dateLabel(job.created_at) }}</span><small v-if="job.error" class="error-text">{{ job.error }}</small></div><span class="status-tag" :class="job.status">{{ job.status }}</span><button class="icon-button" :disabled="job.status !== 'completed'" @click="playAudio(job.audio_url)" title="Play"><Play :size="16"/></button><button class="icon-button" :disabled="job.status !== 'completed'" @click="downloadAudio(job.audio_url, `moss-${job.id}.wav`)" title="Download"><ArrowDownToLine :size="16"/></button></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Clock3 :size="29"/></div><strong>No generations yet</strong><span>สร้างเสียงจากหน้า Playground แล้วผลลัพธ์จะอยู่ที่นี่</span><button class="button secondary" @click="navigate('studio')">Open Playground</button></div></div></template>
 
-        <template v-if="page === 'model'"><div class="page-header"><div><div class="eyebrow"><Cpu :size="14"/> ENGINE CONFIGURATION</div><h1>Model <em>Manager.</em></h1><p>สถานะของ MOSS-TTS Local Transformer v1.5 และการดาวน์โหลดโมเดล</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Check status</button></div><div class="panel details-panel"><div class="model-head"><div class="model-logo"><Waves :size="32"/></div><div><span class="panel-kicker">CURRENTLY CONFIGURED</span><h2>MOSS-TTS Local Transformer <span>v1.5</span></h2><p>OpenMOSS-Team · Apache 2.0 · Local model</p></div><span class="status-tag" :class="online ? 'completed' : 'failed'">{{ online ? 'API Online' : 'API Offline' }}</span></div><div class="model-stats"><div><small>Model ID</small><strong class="wrap-text">{{ health?.model || 'OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5' }}</strong></div><div><small>Runtime status</small><strong>{{ health?.engine || 'Unknown' }}</strong></div><div><small>Device</small><strong>{{ health?.device || 'Not connected' }}</strong></div><div><small>Codec</small><strong>48 kHz · Stereo</strong></div></div><div class="model-note"><Info :size="18"/><div><strong>Lazy loading enabled</strong><p>โมเดลจะถูกโหลดเมื่อเริ่มสร้างเสียงครั้งแรก — สถานะ Standby ไม่ได้หมายความว่าดาวน์โหลดหรือโหลดโมเดลเรียบร้อยแล้ว</p></div></div><div class="model-links"><a target="_blank" rel="noreferrer" href="https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5">Model on Hugging Face ↗</a><a target="_blank" rel="noreferrer" href="https://github.com/OpenMOSS/MOSS-TTS">Official repository ↗</a></div></div></template>
+        <template v-if="page === 'model'">
+          <div class="page-header"><div><div class="eyebrow"><Cpu :size="14"/> MODEL LIBRARY</div><h1>Saved <em>Models.</em></h1><p>Import a local checkpoint, validate it and choose which model generates speech.</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Refresh</button></div>
+          <section class="panel details-panel">
+            <h2>Registered Models ({{ savedModels.length }})</h2>
+            <div v-for="m in savedModels" :key="m.id" class="voice-item" style="margin-top:12px">
+              <input type="radio" v-model="selectedModel" :value="m.id" :aria-label="m.name"/>
+              <div class="voice-item-info"><strong>{{ m.name }}</strong><span>{{ m.precision.toUpperCase() }} · {{ m.status }} · {{ m.is_default ? 'Default' : 'Saved' }} · {{ modelRuntime?.loaded_model_id === m.id ? 'GPU loaded' : 'Not loaded' }}</span><small class="wrap-text">{{ m.model_path }}</small></div>
+            </div>
+            <p v-if="!savedModels.length">No models registered.</p>
+            <div class="modal-actions">
+              <button class="button primary" :disabled="modelBusy || !selectedModel" @click="modelAction('load')">Load Model</button>
+              <button class="button secondary" :disabled="modelBusy || !selectedModel" @click="modelAction('unload')">Unload</button>
+              <button class="button secondary" :disabled="modelBusy || !selectedModel" @click="modelAction('activate')">Set Default</button>
+              <button class="button secondary" :disabled="modelBusy || !selectedModel" @click="modelAction('validate')">Validate WAV</button>
+            </div>
+            <p class="section-desc">GPU: {{ modelRuntime?.device || 'Not loaded' }} · Runtime: {{ modelRuntime?.state || 'Unknown' }}. Only one model is resident at a time.</p>
+            <div class="model-note"><Info :size="18"/><div><strong>INT8 Safety</strong><p>INT8 export and checkpoint reload are disabled until architecture-specific compatibility is verified. A saved INT8 folder will require validation before activation.</p></div></div>
+          </section>
+          <section class="panel details-panel" style="margin-top:18px">
+            <h2>Import Existing Model</h2>
+            <p class="section-desc">Enter a folder path on the backend computer, inside MODELS_DIR. This does not upload a model from the browser.</p>
+            <label class="modal-label">Model name</label><input class="modal-input" v-model="importName" placeholder="My local MOSS"/>
+            <label class="modal-label">Folder path</label><input class="modal-input" v-model="importPath" placeholder="D:\\models\\moss-tts"/>
+            <label class="modal-label">Precision</label><select class="modal-input" v-model="importPrecision"><option value="bf16">BF16</option><option value="fp32">FP32</option><option value="int8">INT8 (validation unavailable)</option></select>
+            <button class="button primary" style="margin-top:12px" :disabled="modelBusy || !importName.trim() || !importPath.trim()" @click="modelAction('import')">Import Existing Model</button>
+          </section>
+        </template>
 
         <template v-if="page === 'api'"><div class="page-header"><div><div class="eyebrow"><Code2 :size="14"/> DEVELOPER TOOLS</div><h1>API <em>Integration.</em></h1><p>เรียกใช้ Voice Studio จาก Anime AI Companion หรือแอปอื่น ๆ ด้วย HTTP API</p></div></div><div class="panel details-panel"><div class="results-heading"><h2><KeyRound :size="20" class="heading-icon"/> Local API</h2><span class="waiting-tag">REST · WAV / Live PCM</span></div><div class="endpoint"><span class="method post">POST</span><code>/v1/jobs</code><button class="icon-button" @click="copy('/v1/jobs')"><Copy :size="16"/></button></div><p class="section-desc">ส่งข้อความ ภาษา และ Voice ID จากคลังเสียง คืน Job ID เพื่อใช้ตรวจสถานะ</p><div class="code-head"><span>REQUEST BODY</span><button @click="copy(JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2))"><Copy :size="14"/> Copy</button></div><pre class="code-block">{{ JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2) }}</pre><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id/audio</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/stream</code></div><p class="section-desc">SGLang-Omni progressive audio stream: raw PCM s16le mono 48 kHz, with language, voice_id, and optional instructions.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/stream/status</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/voices</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voices</code></div><div class="model-note"><ShieldCheck :size="18"/><div><strong>Authentication</strong><p>ทุก request ต้องมี header <code>X-API-Key</code> สำหรับการใช้งานจริง ให้เรียกผ่าน Backend-to-Backend ไม่ควรฝัง secret ในเว็บที่เปิดสาธารณะ</p></div></div></div></template>
         <footer class="page-footer"><span>MOSS Voice Studio · Built for local AI creativity</span><span>Open-source model · Phase 3</span></footer>

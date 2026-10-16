@@ -57,7 +57,7 @@ def test_generation_lifecycle(monkeypatch):
     import time
     from app.engine import engine
 
-    def stub_synthesis(_text, _language, _reference, output, _generation=None):
+    def stub_synthesis(_text, _language, _reference, output, _generation=None, _model=None):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(fake_wav())
 
@@ -76,3 +76,21 @@ def test_generation_lifecycle(monkeypatch):
     assert wav_response.status_code == 200
     assert wav_response.content.startswith(b'RIFF')
     assert job['settings'] == {'temperature': 1.7, 'top_p': 0.8, 'top_k': 25}
+
+def test_model_registry_and_activation():
+    res = client.get('/v1/models', headers=HEADERS)
+    assert res.status_code == 200
+    assert any(m['id'] == 'moss-original' and m['is_default'] for m in res.json()['items'])
+    assert client.get('/v1/models/runtime', headers=HEADERS).status_code == 200
+    assert client.post('/v1/models/missing/activate', headers=HEADERS).status_code == 404
+    assert client.post('/v1/models/export', headers=HEADERS).status_code == 501
+
+
+def test_model_import_rejects_untrusted_path():
+    res = client.post('/v1/models/import', headers=HEADERS, json={
+        'name': 'Outside root', 'model_path': '/does/not/exist', 'precision': 'bf16'
+    })
+    assert res.status_code in (403, 422)
+    res = client.post('/v1/jobs', headers=HEADERS,
+                      json={'text': 'hello', 'model_id': 'no-such-model'})
+    assert res.status_code == 404

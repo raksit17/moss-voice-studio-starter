@@ -43,6 +43,13 @@ def initialize() -> None:
           settings_json TEXT NOT NULL DEFAULT '{}',
           FOREIGN KEY (voice_id) REFERENCES voices(id)
         );
+        CREATE TABLE IF NOT EXISTS models (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL,
+          model_path TEXT NOT NULL UNIQUE, precision TEXT NOT NULL,
+          status TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_default_model ON models(is_default) WHERE is_default=1;
         CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
         ''')
         fields = {row[1] for row in con.execute('PRAGMA table_info(voices)')}
@@ -53,6 +60,8 @@ def initialize() -> None:
         job_fields = {row[1] for row in con.execute('PRAGMA table_info(jobs)')}
         if 'settings_json' not in job_fields:
             con.execute("ALTER TABLE jobs ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'")
+        if 'model_id' not in job_fields:
+            con.execute('ALTER TABLE jobs ADD COLUMN model_id TEXT')
         con.execute("UPDATE jobs SET status='failed', error='Server restarted before completion', updated_at=? WHERE status IN ('queued','running')", (now_iso(),))
 
 
