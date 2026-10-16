@@ -26,7 +26,8 @@ def initialize() -> None:
           name TEXT NOT NULL,
           language TEXT NOT NULL,
           file_path TEXT NOT NULL,
-          created_at TEXT NOT NULL
+          created_at TEXT NOT NULL,
+          transcript TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS jobs (
           id TEXT PRIMARY KEY,
@@ -42,6 +43,10 @@ def initialize() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
         ''')
+        fields = {row[1] for row in con.execute('PRAGMA table_info(voices)')}
+        if 'transcript' not in fields:
+            con.execute("ALTER TABLE voices ADD COLUMN transcript TEXT NOT NULL DEFAULT ''")
+        con.execute("UPDATE jobs SET status='failed', error='Server restarted before completion', updated_at=? WHERE status IN ('queued','running')", (now_iso(),))
 
 
 def query_all(sql: str, params: tuple = ()) -> list[dict]:
