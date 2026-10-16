@@ -5,7 +5,7 @@ Voice packages are **reusable references**, NOT trained checkpoints, LoRA, disti
 ## Setup (Windows)
 From backend/ use a dedicated Python environment for F5 to avoid changing MOSS dependencies:
 
-    py -3.12 -m venv .venv-f5
+    python -m venv .venv-f5
     .venv-f5\Scripts\python.exe -m pip install -r requirements-f5-thai.txt
 
 Install a CUDA-compatible PyTorch based on your local driver and the F5 package. In backend/.env configure F5_PYTHON to the absolute path of this virtual environment's python.exe. Launch FastAPI from backend/ so the spawned module app.voice_models.f5_worker can be imported.
@@ -22,3 +22,5 @@ POST body: {"name":"test1-small","source_job_id":"COMPLETED_ID"} or {"name":"tes
 Generate with POST /v1/jobs: {"text":"สวัสดีค่ะ","language":"Thai","voice_model_id":"PACKAGE_ID"}; do not combine with MOSS model_id or voice_id.
 
 Manifest flags: trained_checkpoint=false, method=zero_shot. A small package FILE does not equal a tiny base-model VRAM footprint. Test real VRAM and speaker similarity locally. F5 may not perfectly reproduce MOSS timbre and emotion. Fine-tuning, student checkpoints, a dedicated dataset/training pipeline, and INT8 exports remain NOT IMPLEMENTED. Only use voices for which you have permission. Model weights are not committed to Git.
+
+If python is not available on PATH, run py --list-paths to locate an installed compatible Python version; py -3.12 requires Python 3.12 to be installed first. On Windows set F5_PYTHON to the FULL absolute path ending in .venv-f5\\Scripts\\python.exe. The main backend and worker should run from backend/.

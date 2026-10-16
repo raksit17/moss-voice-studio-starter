@@ -115,5 +115,12 @@ def delete_package(package_id: str) -> None:
     root = (settings.models_dir / 'voice-packages').resolve()
     if not folder.is_relative_to(root) or folder == root:
         raise HTTPException(409, detail='Unsafe package location')
+    # Do not destroy references while the single inference worker is using them.
+    busy = query_one(
+        "SELECT id FROM jobs WHERE voice_model_id=? AND status IN ('queued','running') LIMIT 1",
+        (package_id,),
+    )
+    if busy:
+        raise HTTPException(409, detail='Voice package is in use by a queued or running job')
     execute('DELETE FROM voice_models WHERE id=?', (package_id,))
     shutil.rmtree(folder)

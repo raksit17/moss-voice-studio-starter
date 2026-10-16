@@ -7,3 +7,4 @@ models/
 *.pyc
 .testpackages/
 .testtmp/
+.venv-f5/

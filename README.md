@@ -189,3 +189,10 @@ moss-voice-studio/
 │  └─ package.json
 └─ README.md
 ```
+
+
+## Saved Small Voice Packages (Phase 5)
+
+MOSS generates the first Thai clip; then **Model Manager -> Create Small Voice Package** saves that completed WAV + transcript as a reusable F5-TTS-THAI voice package. **Voice Playground** can subsequently select that package, automatically unload MOSS and run F5 in a separate subprocess. This avoids reloading MOSS 5B but still needs the F5 base model, which uses its own memory. This is zero-shot voice cloning, **not** trained-model distillation or LoRA.
+
+Install `backend/requirements-f5-thai.txt` in a separate Python virtual environment, set `F5_PYTHON` in `backend/.env`, and follow [Phase 5 instructions](docs/PHASE5_VOICE_PACKAGES.md). GPU behavior and voice fidelity must be tested on the local machine.
