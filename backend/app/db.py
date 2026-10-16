@@ -49,6 +49,19 @@ def initialize() -> None:
           status TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS voice_models (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          runtime TEXT NOT NULL,
+          method TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          language TEXT NOT NULL,
+          transcript TEXT NOT NULL,
+          package_dir TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_voice_models_created ON voice_models(created_at DESC);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_default_model ON models(is_default) WHERE is_default=1;
         CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
         ''')
@@ -62,6 +75,8 @@ def initialize() -> None:
             con.execute("ALTER TABLE jobs ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'")
         if 'model_id' not in job_fields:
             con.execute('ALTER TABLE jobs ADD COLUMN model_id TEXT')
+        if 'voice_model_id' not in job_fields:
+            con.execute('ALTER TABLE jobs ADD COLUMN voice_model_id TEXT')
         con.execute("UPDATE jobs SET status='failed', error='Server restarted before completion', updated_at=? WHERE status IN ('queued','running')", (now_iso(),))
 
 

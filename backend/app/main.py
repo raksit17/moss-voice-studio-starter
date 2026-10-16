@@ -16,6 +16,8 @@ from .db import execute, initialize, now_iso, query_all, query_one
 from .engine import engine
 from .model_manager import ImportModel, import_model, list_models, resolve_model, register_original, activate, default_model
 from .streaming import StreamBody, stream_pcm, status as stream_status
+from .voice_models.registry import BuildVoicePackage, build_package, delete_package, list_packages, resolve_package
+from .voice_models.runtimes.f5_thai_runtime import synthesize_f5
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('moss-studio')
@@ -44,6 +46,7 @@ class GenerateBody(BaseModel):
     language: str = 'Thai'
     voice_id: str | None = None
     model_id: str | None = None
+    voice_model_id: str | None = None
     temperature: float = Field(default=1.7, ge=0.1, le=2.0)
     top_p: float = Field(default=0.8, ge=0.05, le=1.0)
     top_k: int = Field(default=25, ge=1, le=100)
@@ -51,7 +54,7 @@ class GenerateBody(BaseModel):
 
 def public_job(row: dict) -> dict:
     return {
-        'id': row['id'], 'voice_id': row['voice_id'], 'model_id': row.get('model_id'), 'text': row['text'],
+        'id': row['id'], 'voice_id': row['voice_id'], 'model_id': row.get('model_id'), 'voice_model_id': row.get('voice_model_id'), 'text': row['text'],
         'language': row['language'], 'status': row['status'], 'error': row['error'],
         'created_at': row['created_at'], 'updated_at': row['updated_at'],
         'audio_url': f"/v1/jobs/{row['id']}/audio" if row['status'] == 'completed' else None,
@@ -140,11 +143,16 @@ def delete_voice(voice_id: str):
     return {'deleted': True}
 
 
-def _process_job(job_id: str, text: str, language: str, reference: Path | None, generation: dict, selected_model: dict) -> None:
+def _process_job(job_id: str, text: str, language: str, reference: Path | None, generation: dict, selected_model: dict | None, voice_package: dict | None = None) -> None:
     output = settings.data_dir / 'generations' / f'{job_id}.wav'
     try:
         execute('UPDATE jobs SET status=?, updated_at=? WHERE id=?', ('running', now_iso(), job_id))
-        engine.synthesize(text, language, reference, output, generation, selected_model)
+        if voice_package is not None:
+            # One executor queues MOSS and F5 jobs; release MOSS GPU memory first.
+            engine.unload()
+            synthesize_f5(text, voice_package, output)
+        else:
+            engine.synthesize(text, language, reference, output, generation, selected_model)
         execute('UPDATE jobs SET status=?, output_path=?, updated_at=? WHERE id=?',
                 ('completed', str(output.resolve()), now_iso(), job_id))
     except Exception as exc:
@@ -162,21 +170,26 @@ def create_job(body: GenerateBody):
         raise HTTPException(422, detail='Supported languages: Thai / English')
     if not body.text.strip():
         raise HTTPException(422, detail='Text cannot be blank')
+    if body.voice_model_id and (body.voice_id or body.model_id):
+        raise HTTPException(422, detail='voice_model_id cannot be combined with MOSS voice_id or model_id')
+    voice_package = resolve_package(body.voice_model_id) if body.voice_model_id else None
+    if voice_package and body.language != voice_package['language']:
+        raise HTTPException(422, detail='Voice package language must match requested language')
     voice = query_one('SELECT * FROM voices WHERE id=?', (body.voice_id,)) if body.voice_id else None
     if body.voice_id and not voice:
         raise HTTPException(404, detail='Selected voice not found')
-    model = resolve_model(body.model_id)
+    model = None if voice_package else resolve_model(body.model_id)
     if not slots.acquire(blocking=False):
         raise HTTPException(429, detail='Generation queue full (8 jobs)')
     job_id = str(uuid4())
     timestamp = now_iso()
     generation = {'temperature': body.temperature, 'top_p': body.top_p, 'top_k': body.top_k}
     try:
-        execute('INSERT INTO jobs(id,voice_id,text,language,status,created_at,updated_at,settings_json,model_id) VALUES(?,?,?,?,?,?,?,?,?)',
+        execute('INSERT INTO jobs(id,voice_id,text,language,status,created_at,updated_at,settings_json,model_id,voice_model_id) VALUES(?,?,?,?,?,?,?,?,?,?)',
                 (job_id, body.voice_id, body.text.strip(), body.language, 'queued', timestamp, timestamp,
-                 json.dumps(generation), model["id"]))
+                 json.dumps(generation), model['id'] if model else None, voice_package['id'] if voice_package else None))
         executor.submit(_process_job, job_id, body.text.strip(), body.language,
-                        Path(voice['file_path']) if voice else None, generation, model)
+                        Path(voice['file_path']) if voice else None, generation, model, voice_package)
     except Exception:
         slots.release()
         raise
@@ -284,3 +297,31 @@ def models_validate(model_id: str):
 @app.post('/v1/models/export', dependencies=[Depends(authorize)])
 def models_export():
     raise HTTPException(501, 'One-time INT8 export needs an architecture-specific verified serialization and reload implementation')
+
+
+# Reusable F5 reference packages are distinct from MOSS checkpoints.
+@app.get('/v1/voice-models', dependencies=[Depends(authorize)])
+def voice_models_list():
+    return {'items': list_packages()}
+
+
+@app.post('/v1/voice-models', status_code=201, dependencies=[Depends(authorize)])
+def voice_models_build(body: BuildVoicePackage):
+    return build_package(body)
+
+
+@app.get('/v1/voice-models/{package_id}', dependencies=[Depends(authorize)])
+def voice_models_get(package_id: str):
+    return resolve_package(package_id)
+
+
+@app.get('/v1/voice-models/{package_id}/reference', dependencies=[Depends(authorize)])
+def voice_models_reference(package_id: str):
+    package = resolve_package(package_id)
+    return FileResponse(Path(package['package_dir']) / 'reference.wav', media_type='audio/wav')
+
+
+@app.delete('/v1/voice-models/{package_id}', dependencies=[Depends(authorize)])
+def voice_models_delete(package_id: str):
+    delete_package(package_id)
+    return {'deleted': True}

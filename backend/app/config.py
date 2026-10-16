@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     moss_device: str = 'auto'
     moss_max_new_tokens: int = 4096
     max_upload_mb: int = 30
+    f5_python: str = ''
+    f5_timeout_seconds: int = 600
     sglang_base_url: str = ''
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
