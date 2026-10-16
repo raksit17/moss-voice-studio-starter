@@ -69,14 +69,40 @@ class MossEngine:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._model = None
+        self.loaded_model_id = None
         self._processor = None
         self.device_name = "not loaded"
         self.state = "not_loaded"
         self.last_error: str | None = None
 
-    def _load(self) -> None:
-        if self._model is not None:
+    def unload(self) -> None:
+        with self._lock:
+            self._model = None
+            self._processor = None
+            self.loaded_model_id = None
+            self.state = "not_loaded"
+            self.device_name = "not loaded"
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+
+    def load_model(self, selected: dict) -> None:
+        with self._lock:
+            self._load(selected)
+
+    def _load(self, selected: dict) -> None:
+        if self._model is not None and self.loaded_model_id == selected["id"]:
             return
+        if self._model is not None:
+            self.unload()
+        if selected["precision"] == "int8":
+            raise RuntimeError("INT8 checkpoint loading is not supported by this MOSS runtime")
+
 
         self.state = "loading"
         self.last_error = None
@@ -103,14 +129,16 @@ class MossEngine:
                     attn = "flash_attention_2"
 
             processor = AutoProcessor.from_pretrained(
-                settings.moss_model_id,
+                selected["model_path"],
                 trust_remote_code=True,
+                local_files_only=Path(selected["model_path"]).exists(),
             )
             processor.audio_tokenizer = processor.audio_tokenizer.to(device)
 
             model = AutoModel.from_pretrained(
-                settings.moss_model_id,
+                selected["model_path"],
                 trust_remote_code=True,
+                local_files_only=Path(selected["model_path"]).exists(),
                 attn_implementation=attn,
                 torch_dtype=dtype,
             ).to(device)
@@ -119,6 +147,7 @@ class MossEngine:
 
             self._processor = processor
             self._model = model
+            self.loaded_model_id = selected["id"]
             self.state = "ready"
 
         except Exception as exc:
@@ -133,12 +162,16 @@ class MossEngine:
         reference: Path | None,
         output: Path,
         generation: dict | None = None,
+        selected_model: dict | None = None,
     ) -> None:
         with self._lock:
             # Patch before processing any reference audio.
             patch_torchaudio_wav_loader()
 
-            self._load()
+            if selected_model is None:
+                from .model_manager import resolve_model
+                selected_model = resolve_model()
+            self._load(selected_model)
 
             import torch
             import soundfile as sf
