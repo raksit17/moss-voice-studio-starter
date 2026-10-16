@@ -11,6 +11,7 @@ export interface Job {
   id: string
   voice_id: string | null
   model_id?: string | null
+  voice_model_id?: string | null
   text: string
   language: string
   status: 'queued' | 'running' | 'completed' | 'failed'
@@ -58,11 +59,11 @@ export const getStreamStatus = () => request<StreamStatus>('/v1/stream/status')
 export const getVoices = async () => (await request<{ items: Voice[] }>('/v1/voices')).items
 export const getJobs = async () => (await request<{ items: Job[] }>('/v1/jobs')).items
 export interface GenerationSettings { temperature: number; top_p: number; top_k: number }
-export const createJob = (text: string, language: string, voiceId: string | null, settings: GenerationSettings, modelId?: string | null) =>
+export const createJob = (text: string, language: string, voiceId: string | null, settings: GenerationSettings, modelId?: string | null, voiceModelId?: string | null) =>
   request<{ id: string; status: string }>('/v1/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, language, voice_id: voiceId, model_id: modelId || null, ...settings }),
+    body: JSON.stringify({ text, language, voice_id: voiceId, model_id: modelId || null, voice_model_id: voiceModelId || null, ...settings }),
   })
 export const deleteVoice = (id: string) => request<{ deleted: boolean }>(`/v1/voices/${id}`, { method: 'DELETE' })
 export const createVoice = (name: string, language: string, file: File, transcript = '', character = '') => {
@@ -127,3 +128,28 @@ export const activateModel = (id: string) => request<SavedModel>(`/v1/models/${i
 export const loadModel = (id: string) => request<ModelRuntime>(`/v1/models/${id}/load`, {method:'POST'})
 export const unloadModel = (id: string) => request<ModelRuntime>(`/v1/models/${id}/unload`, {method:'POST'})
 export const validateModel = (id: string) => request<SavedModel>(`/v1/models/${id}/validate`, {method:'POST'})
+
+/** A reusable F5 reference package, NOT a trained small checkpoint. */
+export interface VoicePackage {
+  id: string
+  name: string
+  runtime: 'f5-tts-th'
+  method: 'zero_shot'
+  source_type: 'voice' | 'generation'
+  source_id: string
+  language: 'Thai'
+  transcript: string
+  package_dir: string
+  created_at: string
+}
+export const getVoicePackages = async () => (await request<{ items: VoicePackage[] }>('/v1/voice-models')).items
+export const buildVoicePackage = (name: string, sourceType: 'voice' | 'generation', sourceId: string) =>
+  request<VoicePackage>('/v1/voice-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name, ...(sourceType === 'voice' ? { source_voice_id: sourceId } : { source_job_id: sourceId }),
+    }),
+  })
+export const deleteVoicePackage = (id: string) =>
+  request<{ deleted: boolean }>(`/v1/voice-models/${id}`, { method: 'DELETE' })

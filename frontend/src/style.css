@@ -26,3 +26,10 @@
 .stream-progress { color: #a9bcd4; font-size: 12px; }
 
 .setting-control{display:flex;align-items:center;justify-content:space-between;padding:8px 0;color:#8794ad;font-size:11px}.setting-control input{width:78px;background:#101728;border:1px solid #363f56;border-radius:6px;color:#e4e7f1;padding:6px 8px}.character-tag{display:inline-block;margin-left:8px;border-radius:10px;padding:3px 7px;background:#30294d;color:#bba8ff;font-size:9px}
+
+/* Reusable F5 voice-package controls */
+.voice-item-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.voice-item-info{min-width:0;flex:1}
+.voice-item-info .wrap-text{overflow-wrap:anywhere}
+.modal-input:disabled,.voice-selection select:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:730px){.voice-item-actions{justify-content:flex-end}.voice-item{flex-wrap:wrap}}
