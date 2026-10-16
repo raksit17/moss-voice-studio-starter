@@ -10,14 +10,14 @@
 ## Phase 2 — implemented and covered by mocked upstream tests
 - True progressive PCM streaming via **official SGLang-Omni** MOSS Local v1.5 API
 - Voice ID -> reference WAV data URI -> SGLang, optional source transcript
-- Configurable \`SGLANG_BASE_URL\` and health check endpoint
+- Configurable `SGLANG_BASE_URL` and health check endpoint
 - One active stream per API process, error preflight, client disconnect cleanup
 - Web Audio signed 16-bit mono/48k playback, buffering, stop via AbortController
 - Streaming status and live controls integrated in the existing Vue playground
 
 ## Phase 3 — integrated foundations delivered
 - Server-side NestJS progressive streaming client and relay controller examples
-- Ordered \`speech\`/\`action\` playback utility with sequence indexes
+- Ordered `speech`/`action` playback utility with sequence indexes
 - Audio analyser RMS -> Live2D mouth-open parameter (ParamA) with smoothing
 - Abort support / speech motion sync / safe handling of action-only segments
 - Character voice IDs and reference-transcript persistence
