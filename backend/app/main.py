@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from .config import settings
 from .db import execute, initialize, now_iso, query_all, query_one
 from .engine import engine
+from .streaming import StreamBody, stream_pcm, status as stream_status
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('moss-studio')
@@ -58,13 +59,14 @@ def health():
         'model': settings.moss_model_id,
         'error': engine.last_error,
         'sample_rate': 48000,
-        'streaming': False,
+        'streaming': bool(settings.sglang_base_url),
+        'stream_backend': 'sglang-omni' if settings.sglang_base_url else None,
     }
 
 
 @app.get('/v1/voices', dependencies=[Depends(authorize)])
 def list_voices():
-    rows = query_all('SELECT id, name, language, created_at FROM voices ORDER BY created_at DESC')
+    rows = query_all('SELECT id, name, language, transcript, created_at FROM voices ORDER BY created_at DESC')
     return {'items': rows}
 
 
@@ -73,6 +75,7 @@ async def upload_voice(
     name: str = Form(..., min_length=1, max_length=80),
     language: str = Form('Thai'),
     consent: bool = Form(False),
+    transcript: str = Form('', max_length=1000),
     audio: UploadFile = File(...),
 ):
     if language not in ('Thai', 'English'):
@@ -101,9 +104,9 @@ async def upload_voice(
         path.unlink(missing_ok=True)
         raise HTTPException(422, detail=str(exc)) from exc
     timestamp = now_iso()
-    execute('INSERT INTO voices(id,name,language,file_path,created_at) VALUES (?,?,?,?,?)',
-            (voice_id, name.strip(), language, str(path.resolve()), timestamp))
-    return {'id': voice_id, 'name': name.strip(), 'language': language, 'created_at': timestamp}
+    execute('INSERT INTO voices(id,name,language,file_path,created_at,transcript) VALUES (?,?,?,?,?,?)',
+            (voice_id, name.strip(), language, str(path.resolve()), timestamp, transcript.strip()))
+    return {'id': voice_id, 'name': name.strip(), 'language': language, 'transcript': transcript.strip(), 'created_at': timestamp}
 
 
 @app.get('/v1/voices/{voice_id}/audio', dependencies=[Depends(authorize)])
@@ -184,3 +187,13 @@ def job_audio(job_id: str):
     if not row or row['status'] != 'completed' or not row['output_path']:
         raise HTTPException(404, detail='Audio not found')
     return FileResponse(row['output_path'], media_type='audio/wav', filename=f'{job_id}.wav')
+
+@app.get('/v1/stream/status', dependencies=[Depends(authorize)])
+async def streaming_status():
+    return await stream_status()
+
+
+@app.post('/v1/stream', dependencies=[Depends(authorize)])
+async def stream_speech(body: StreamBody):
+    """Return progressive raw PCM directly from the running SGLang model server."""
+    return await stream_pcm(body)
