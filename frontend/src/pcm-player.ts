@@ -8,6 +8,7 @@ export async function playPcmResponse(
   context: AudioContext,
   signal: AbortSignal,
   onChunk: (bytes: number) => void,
+  destination: AudioNode = context.destination,
 ): Promise<void> {
   const encoding = response.headers.get('X-Audio-Encoding')
   const rate = Number(response.headers.get('X-Sample-Rate') ?? '48000')
@@ -39,7 +40,7 @@ export async function playPcmResponse(
       }
       const node = context.createBufferSource()
       node.buffer = audio
-      node.connect(context.destination)
+      node.connect(destination)
       playAt = Math.max(playAt, context.currentTime + 0.025)
       node.start(playAt)
       playAt += samples / rate
