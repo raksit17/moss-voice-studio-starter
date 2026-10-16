@@ -115,39 +115,39 @@ engine handles WAV jobs only. You must download the model and have a CUDA GPU
 with enough VRAM. Follow the official SGLang-Omni installation instructions
 (prefer Linux / WSL2 + CUDA for this engine):
 
-\`\`\`bash
+```bash
 sgl-omni serve --model-path OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5 --port 8000
-\`\`\`
+```
 
-Set in \`backend/.env\`:
+Set in `backend/.env`:
 
-\`\`\`dotenv
+```dotenv
 SGLANG_BASE_URL=http://127.0.0.1:8000
-\`\`\`
+```
 
 Restart FastAPI, open **Voice Playground**, type a Thai sentence, select a
 consented voice profile and choose **Stream Speech (Live)**. To control cloning,
 set the **Reference transcript** to the words *actually spoken* in your sample
 when uploading the voice. The live API is:
 
-\`\`\`http
+```http
 POST /v1/stream
 X-API-Key: local-dev-key
 Content-Type: application/json
 
 {"text":"สวัสดีค่ะ วันนี้เป็นยังไงบ้างคะ","voice_id":null,"language":"Thai"}
-\`\`\`
+```
 
-Response: raw \`pcm_s16le\` mono, 48000 samples/second; \`X-Audio-Encoding\`,
-\`X-Sample-Rate\` and \`X-Channels\` headers describe it. **It is not WAV.**
+Response: raw `pcm_s16le` mono, 48000 samples/second; `X-Audio-Encoding`,
+`X-Sample-Rate` and `X-Channels` headers describe it. **It is not WAV.**
 The backend verifies voice ID, forwards the reference by data URI and streams
 bytes without waiting for the complete utterance. Stop button aborts browser
-playback. Use the \`/v1/stream/status\` endpoint to diagnose configuration.
+playback. Use the `/v1/stream/status` endpoint to diagnose configuration.
 
 The companion integration is supplied as reusable NestJS/TypeScript examples:
-\`docs/anime-ai-companion-integration.ts\`,
-\`docs/anime-ai-companion-stream.controller.ts\`, and
-\`frontend/src/companion-bridge.ts\`. The bridge uses an AnalyserNode to map
+`docs/anime-ai-companion-integration.ts`,
+`docs/anime-ai-companion-stream.controller.ts`, and
+`frontend/src/companion-bridge.ts`. The bridge uses an AnalyserNode to map
 real playback RMS to Live2D lip sync and preserves speech/action ordering.
 
 **Installation/benchmarks disclaimer:** Real CUDA model inference has not
