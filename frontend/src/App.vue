@@ -11,7 +11,9 @@ import {
 import {
   type Health, type Job, type Voice, createJob, createVoice,
   deleteVoice, getAudio, getHealth, getJobs, getVoices,
+  getStreamStatus, streamSpeech, type StreamStatus,
 } from './api'
+import { playPcmResponse } from './pcm-player'
 
 type Page = 'studio' | 'voices' | 'history' | 'model' | 'api'
 const page = ref<Page>('studio')
@@ -35,6 +37,13 @@ const uploadName = ref('')
 const uploadLanguage = ref<'Thai' | 'English'>('Thai')
 const uploadFile = ref<File | null>(null)
 const uploadConsent = ref(false)
+const uploadTranscript = ref('')
+const liveActive = ref(false)
+const liveBytes = ref(0)
+const liveInstructions = ref('')
+const liveStatus = ref<StreamStatus | null>(null)
+let liveAbort: AbortController | null = null
+let liveContext: AudioContext | null = null
 const uploading = ref(false)
 const pickedFileInput = ref<HTMLInputElement | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
@@ -65,7 +74,8 @@ function navigate(next: Page) {
 }
 async function refresh() {
   try {
-    const [h, vs, js] = await Promise.all([getHealth(), getVoices(), getJobs()])
+    const [h, vs, js, st] = await Promise.all([getHealth(), getVoices(), getJobs(), getStreamStatus()])
+    liveStatus.value = st
     health.value = h
     voices.value = vs
     jobs.value = js
@@ -116,9 +126,9 @@ async function uploadVoice() {
   }
   uploading.value = true
   try {
-    const voice = await createVoice(uploadName.value, uploadLanguage.value, uploadFile.value)
+    const voice = await createVoice(uploadName.value, uploadLanguage.value, uploadFile.value, uploadTranscript.value)
     uploadOpen.value = false
-    uploadName.value = ''; uploadFile.value = null; uploadConsent.value = false
+    uploadName.value = ''; uploadFile.value = null; uploadConsent.value = false; uploadTranscript.value = ''
     selectedVoice.value = voice.id
     await refresh()
     alertMessage(`เพิ่มเสียง ${voice.name} ใน Voice Library แล้ว`)
@@ -141,11 +151,46 @@ async function copy(textToCopy: string) {
   try { await navigator.clipboard.writeText(textToCopy); alertMessage('คัดลอกเรียบร้อย') }
   catch { alertMessage('คัดลอกไม่สำเร็จ', 'error') }
 }
+async function liveSpeak() {
+  if (!text.value.trim() || liveActive.value) return
+  if (!liveStatus.value?.ready) {
+    alertMessage('ต้องเปิด SGLang-Omni และตั้งค่า SGLANG_BASE_URL ก่อน', 'error')
+    return
+  }
+  liveAbort = new AbortController()
+  liveActive.value = true
+  liveBytes.value = 0
+  const ctx = new AudioContext()
+  liveContext = ctx
+  try {
+    // Resume on the button gesture to satisfy browser autoplay permissions.
+    await ctx.resume()
+    const response = await streamSpeech(text.value.trim(), language.value,
+      selectedVoice.value || null, liveInstructions.value, liveAbort.signal)
+    await playPcmResponse(response, ctx, liveAbort.signal, bytes => {
+      liveBytes.value += bytes
+    })
+    alertMessage('สตรีมเสียงเสร็จแล้ว')
+  } catch (e) {
+    if (!(e instanceof DOMException && e.name === 'AbortError'))
+      alertMessage((e as Error).message, 'error')
+  } finally {
+    await ctx.close().catch(() => undefined)
+    if (liveContext === ctx) liveContext = null
+    liveAbort = null
+    liveActive.value = false
+  }
+}
+function stopLive() {
+  liveAbort?.abort()
+  void liveContext?.close().catch(() => undefined)
+}
 onMounted(async () => {
   await refresh()
   timer = setInterval(() => void refresh(), 3500)
 })
 onUnmounted(() => {
+  stopLive()
   if (timer) clearInterval(timer)
   if (toastTimer) clearTimeout(toastTimer)
   if (playerUrl.value) URL.revokeObjectURL(playerUrl.value)
@@ -213,7 +258,16 @@ onUnmounted(() => {
               <div class="field-label field-label-space">Quick prompts <span>Click to try</span></div>
               <div class="prompt-row"><button v-for="prompt in examples" :key="prompt.name" @click="text=prompt.text">{{ prompt.name }}</button></div>
               <div class="editor-divider"></div>
-              <div class="action-row"><div class="quality-mark"><ShieldCheck :size="17"/><div><strong>48 kHz · Stereo WAV</strong><span>High fidelity audio output</span></div></div><button class="button primary generate-btn" :disabled="creating || isBusy || !text.trim()" @click="generate"><Waves v-if="!creating && !isBusy" :size="18"/><RefreshCcw v-else :size="18" class="spin"/>{{ creating || isBusy ? 'Generating...' : 'Generate Speech' }}</button></div>
+              <div class="stream-params"><label for="live-style">Streaming style hint (optional)</label><input id="live-style" v-model="liveInstructions" maxlength="240" placeholder="e.g. warm, gentle, cheerful" /><span>{{ liveStatus?.ready ? "● SGLang ready · progressive PCM 48 kHz mono" : "○ Streaming requires SGLang-Omni server" }}</span></div><div class="action-row"><div class="quality-mark"><ShieldCheck :size="17"/><div><strong>48 kHz · Stereo WAV</strong><span>High fidelity audio output</span></div></div><button class="button primary generate-btn" :disabled="creating || isBusy || !text.trim()" @click="generate"><Waves v-if="!creating && !isBusy" :size="18"/><RefreshCcw v-else :size="18" class="spin"/>{{ creating || isBusy ? 'Generating...' : 'Generate Speech' }}</button></div>
+              <div class="stream-actions">
+                <button v-if="!liveActive" class="button secondary" :disabled="!text.trim() || !liveStatus?.ready" @click="liveSpeak">
+                  <Zap :size="17"/> Stream Speech (Live)
+                </button>
+                <button v-else class="button secondary" @click="stopLive">
+                  <Pause :size="17"/> Stop live audio
+                </button>
+                <span class="stream-progress">{{ liveActive ? 'Playing progressive PCM · ' + Math.round(liveBytes / 1024) + ' KB received' : 'WAV mode remains available offline from SGLang' }}</span>
+              </div>
             </section>
 
             <section class="panel voice-panel">
@@ -239,11 +293,11 @@ onUnmounted(() => {
 
         <template v-if="page === 'model'"><div class="page-header"><div><div class="eyebrow"><Cpu :size="14"/> ENGINE CONFIGURATION</div><h1>Model <em>Manager.</em></h1><p>สถานะของ MOSS-TTS Local Transformer v1.5 และการดาวน์โหลดโมเดล</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Check status</button></div><div class="panel details-panel"><div class="model-head"><div class="model-logo"><Waves :size="32"/></div><div><span class="panel-kicker">CURRENTLY CONFIGURED</span><h2>MOSS-TTS Local Transformer <span>v1.5</span></h2><p>OpenMOSS-Team · Apache 2.0 · Local model</p></div><span class="status-tag" :class="online ? 'completed' : 'failed'">{{ online ? 'API Online' : 'API Offline' }}</span></div><div class="model-stats"><div><small>Model ID</small><strong class="wrap-text">{{ health?.model || 'OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5' }}</strong></div><div><small>Runtime status</small><strong>{{ health?.engine || 'Unknown' }}</strong></div><div><small>Device</small><strong>{{ health?.device || 'Not connected' }}</strong></div><div><small>Codec</small><strong>48 kHz · Stereo</strong></div></div><div class="model-note"><Info :size="18"/><div><strong>Lazy loading enabled</strong><p>โมเดลจะถูกโหลดเมื่อเริ่มสร้างเสียงครั้งแรก — สถานะ Standby ไม่ได้หมายความว่าดาวน์โหลดหรือโหลดโมเดลเรียบร้อยแล้ว</p></div></div><div class="model-links"><a target="_blank" rel="noreferrer" href="https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5">Model on Hugging Face ↗</a><a target="_blank" rel="noreferrer" href="https://github.com/OpenMOSS/MOSS-TTS">Official repository ↗</a></div></div></template>
 
-        <template v-if="page === 'api'"><div class="page-header"><div><div class="eyebrow"><Code2 :size="14"/> DEVELOPER TOOLS</div><h1>API <em>Integration.</em></h1><p>เรียกใช้ Voice Studio จาก Anime AI Companion หรือแอปอื่น ๆ ด้วย HTTP API</p></div></div><div class="panel details-panel"><div class="results-heading"><h2><KeyRound :size="20" class="heading-icon"/> Local API</h2><span class="waiting-tag">REST · WAV</span></div><div class="endpoint"><span class="method post">POST</span><code>/v1/jobs</code><button class="icon-button" @click="copy('/v1/jobs')"><Copy :size="16"/></button></div><p class="section-desc">ส่งข้อความ ภาษา และ Voice ID จากคลังเสียง คืน Job ID เพื่อใช้ตรวจสถานะ</p><div class="code-head"><span>REQUEST BODY</span><button @click="copy(JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2))"><Copy :size="14"/> Copy</button></div><pre class="code-block">{{ JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2) }}</pre><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id/audio</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/voices</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voices</code></div><div class="model-note"><ShieldCheck :size="18"/><div><strong>Authentication</strong><p>ทุก request ต้องมี header <code>X-API-Key</code> สำหรับการใช้งานจริง ให้เรียกผ่าน Backend-to-Backend ไม่ควรฝัง secret ในเว็บที่เปิดสาธารณะ</p></div></div></div></template>
-        <footer class="page-footer"><span>MOSS Voice Studio · Built for local AI creativity</span><span>Open-source model · v0.1.0</span></footer>
+        <template v-if="page === 'api'"><div class="page-header"><div><div class="eyebrow"><Code2 :size="14"/> DEVELOPER TOOLS</div><h1>API <em>Integration.</em></h1><p>เรียกใช้ Voice Studio จาก Anime AI Companion หรือแอปอื่น ๆ ด้วย HTTP API</p></div></div><div class="panel details-panel"><div class="results-heading"><h2><KeyRound :size="20" class="heading-icon"/> Local API</h2><span class="waiting-tag">REST · WAV / Live PCM</span></div><div class="endpoint"><span class="method post">POST</span><code>/v1/jobs</code><button class="icon-button" @click="copy('/v1/jobs')"><Copy :size="16"/></button></div><p class="section-desc">ส่งข้อความ ภาษา และ Voice ID จากคลังเสียง คืน Job ID เพื่อใช้ตรวจสถานะ</p><div class="code-head"><span>REQUEST BODY</span><button @click="copy(JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2))"><Copy :size="14"/> Copy</button></div><pre class="code-block">{{ JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2) }}</pre><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id/audio</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/stream</code></div><p class="section-desc">SGLang-Omni progressive audio stream: raw PCM s16le mono 48 kHz, with language, voice_id, and optional instructions.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/stream/status</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/voices</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voices</code></div><div class="model-note"><ShieldCheck :size="18"/><div><strong>Authentication</strong><p>ทุก request ต้องมี header <code>X-API-Key</code> สำหรับการใช้งานจริง ให้เรียกผ่าน Backend-to-Backend ไม่ควรฝัง secret ในเว็บที่เปิดสาธารณะ</p></div></div></div></template>
+        <footer class="page-footer"><span>MOSS Voice Studio · Built for local AI creativity</span><span>Open-source model · Phase 3</span></footer>
       </div>
     </main>
 
-    <div v-if="uploadOpen" class="modal-overlay" @click.self="uploadOpen = false"><div class="modal"><div class="modal-top"><div><div class="eyebrow">NEW VOICE PROFILE</div><h2>Add reference voice</h2><p>สร้างโปรไฟล์เสียงสำหรับ Zero-shot Voice Cloning</p></div><button class="icon-button" @click="uploadOpen=false"><X :size="19"/></button></div><label class="modal-label">Voice name</label><input class="modal-input" v-model="uploadName" maxlength="80" placeholder="เช่น Yuna, Narrator A"/><label class="modal-label">Reference language</label><select class="modal-input" v-model="uploadLanguage"><option value="Thai">🇹🇭 Thai</option><option value="English">🇺🇸 English</option></select><label class="modal-label">Reference audio</label><input type="file" class="hidden-input" accept=".wav,audio/wav" ref="pickedFileInput" @change="fileChange"/><div class="modal-file" @click="pickedFileInput?.click()"><UploadCloud :size="24"/><strong>{{ uploadFile?.name || 'Click to choose a WAV file' }}</strong><span>PCM WAV · 1–60 seconds · recommended 3–20 seconds · up to 30 MB</span></div><label class="consent"><input type="checkbox" v-model="uploadConsent"/><span>ฉันมีสิทธิ์หรือได้รับความยินยอมให้ใช้เสียงนี้เพื่อสร้างเสียงสังเคราะห์</span></label><div class="modal-actions"><button class="button ghost" @click="uploadOpen=false">Cancel</button><button class="button primary" :disabled="uploading" @click="uploadVoice"><UploadCloud :size="17"/> {{ uploading ? 'Uploading...' : 'Save Voice Profile' }}</button></div></div></div>
+    <div v-if="uploadOpen" class="modal-overlay" @click.self="uploadOpen = false"><div class="modal"><div class="modal-top"><div><div class="eyebrow">NEW VOICE PROFILE</div><h2>Add reference voice</h2><p>สร้างโปรไฟล์เสียงสำหรับ Zero-shot Voice Cloning</p></div><button class="icon-button" @click="uploadOpen=false"><X :size="19"/></button></div><label class="modal-label">Voice name</label><input class="modal-input" v-model="uploadName" maxlength="80" placeholder="เช่น Yuna, Narrator A"/><label class="modal-label">Reference language</label><select class="modal-input" v-model="uploadLanguage"><option value="Thai">🇹🇭 Thai</option><option value="English">🇺🇸 English</option></select><label class="modal-label">Reference transcript (recommended for cloning)</label><textarea class="modal-input" rows="2" v-model="uploadTranscript" maxlength="1000" placeholder="พิมพ์ข้อความที่พูดจริงในเสียงต้นฉบับ"></textarea><label class="modal-label">Reference audio</label><input type="file" class="hidden-input" accept=".wav,audio/wav" ref="pickedFileInput" @change="fileChange"/><div class="modal-file" @click="pickedFileInput?.click()"><UploadCloud :size="24"/><strong>{{ uploadFile?.name || 'Click to choose a WAV file' }}</strong><span>PCM WAV · 1–60 seconds · recommended 3–20 seconds · up to 30 MB</span></div><label class="consent"><input type="checkbox" v-model="uploadConsent"/><span>ฉันมีสิทธิ์หรือได้รับความยินยอมให้ใช้เสียงนี้เพื่อสร้างเสียงสังเคราะห์</span></label><div class="modal-actions"><button class="button ghost" @click="uploadOpen=false">Cancel</button><button class="button primary" :disabled="uploading" @click="uploadVoice"><UploadCloud :size="17"/> {{ uploading ? 'Uploading...' : 'Save Voice Profile' }}</button></div></div></div>
   </div>
 </template>
