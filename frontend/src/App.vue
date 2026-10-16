@@ -12,6 +12,7 @@ import {
   type Health, type Job, type Voice, createJob, createVoice,
   deleteVoice, getAudio, getHealth, getJobs, getVoices,
   getStreamStatus, streamSpeech, type StreamStatus,
+  type GenerationSettings,
 } from './api'
 import { playPcmResponse } from './pcm-player'
 
@@ -24,6 +25,9 @@ const voices = ref<Voice[]>([])
 const jobs = ref<Job[]>([])
 const selectedVoice = ref('')
 const language = ref<'Thai' | 'English'>('Thai')
+const temperature = ref(1.7)
+const topP = ref(0.8)
+const topK = ref(25)
 const text = ref('กลับมาแล้วเหรอคะ... ฉันกำลังรอคุณอยู่พอดีเลย วันนี้มีอะไรอยากเล่าให้ฟังไหมคะ?')
 const notification = ref('')
 const error = ref('')
@@ -34,6 +38,7 @@ const player = ref<HTMLAudioElement | null>(null)
 const playing = ref(false)
 const uploadOpen = ref(false)
 const uploadName = ref('')
+const uploadCharacter = ref('')
 const uploadLanguage = ref<'Thai' | 'English'>('Thai')
 const uploadFile = ref<File | null>(null)
 const uploadConsent = ref(false)
@@ -89,7 +94,7 @@ async function generate() {
   if (!text.value.trim()) return alertMessage('กรุณาพิมพ์ข้อความก่อนสร้างเสียง', 'error')
   creating.value = true
   try {
-    const job = await createJob(text.value.trim(), language.value, selectedVoice.value || null)
+    const job = await createJob(text.value.trim(), language.value, selectedVoice.value || null, generationSettings())
     activeJobId.value = job.id
     alertMessage('ส่งงานเข้า Voice Engine แล้ว — ดูสถานะได้ในรายการด้านล่าง')
     await refresh()
@@ -98,6 +103,9 @@ async function generate() {
   } finally {
     creating.value = false
   }
+}
+function generationSettings(): GenerationSettings {
+  return { temperature: temperature.value, top_p: topP.value, top_k: topK.value }
 }
 async function playAudio(path: string | null) {
   if (!path) return
@@ -126,9 +134,9 @@ async function uploadVoice() {
   }
   uploading.value = true
   try {
-    const voice = await createVoice(uploadName.value, uploadLanguage.value, uploadFile.value, uploadTranscript.value)
+    const voice = await createVoice(uploadName.value, uploadLanguage.value, uploadFile.value, uploadTranscript.value, uploadCharacter.value)
     uploadOpen.value = false
-    uploadName.value = ''; uploadFile.value = null; uploadConsent.value = false; uploadTranscript.value = ''
+    uploadName.value = ''; uploadFile.value = null; uploadConsent.value = false; uploadTranscript.value = ''; uploadCharacter.value = ''
     selectedVoice.value = voice.id
     await refresh()
     alertMessage(`เพิ่มเสียง ${voice.name} ใน Voice Library แล้ว`)
@@ -166,7 +174,7 @@ async function liveSpeak() {
     // Resume on the button gesture to satisfy browser autoplay permissions.
     await ctx.resume()
     const response = await streamSpeech(text.value.trim(), language.value,
-      selectedVoice.value || null, liveInstructions.value, liveAbort.signal)
+      selectedVoice.value || null, liveInstructions.value, liveAbort.signal, generationSettings())
     await playPcmResponse(response, ctx, liveAbort.signal, bytes => {
       liveBytes.value += bytes
     })
@@ -274,7 +282,7 @@ onUnmounted(() => {
               <div class="panel-heading"><div><span class="panel-kicker">02 / VOICE IDENTITY</span><h2><Mic2 :size="19" class="heading-icon"/> Choose a Voice</h2><p>เลือกเสียงต้นแบบของตัวละคร</p></div></div>
               <div class="voice-selection"><div class="voice-avatar"><AudioLines :size="24"/></div><div class="voice-select-text"><strong>{{ selectedVoiceName }}</strong><span>{{ selectedVoice ? 'Zero-shot voice cloning' : 'No reference voice' }}</span></div><ChevronDown :size="18" class="select-chevron"/><select v-model="selectedVoice"><option value="">Default voice</option><option v-for="voice in voices" :key="voice.id" :value="voice.id">{{ voice.name }}</option></select></div>
               <div class="upload-card" @click="uploadOpen = true"><div class="upload-icon"><UploadCloud :size="25"/></div><strong>Add your own voice</strong><span>อัปโหลดเสียง WAV ที่ได้รับอนุญาต เพื่อใช้สร้างเสียงพูดใหม่ด้วยบุคลิกเสียงเดิม</span><button class="upload-link">Upload reference audio <span>↗</span></button></div>
-              <div class="settings-section"><h3><SlidersHorizontal :size="16"/> Model parameters</h3><div class="info-setting"><span>Temperature</span><strong>1.7 <small>Default</small></strong></div><div class="info-setting"><span>Top P / Top K</span><strong>0.8 / 25</strong></div><div class="info-setting"><span>Voice method</span><strong>Zero-shot</strong></div><p class="settings-note"><Info :size="14"/> ใช้ค่า Generation ที่ผู้พัฒนาแนะนำไว้ใน MVP นี้</p></div>
+              <div class="settings-section"><h3><SlidersHorizontal :size="16"/> Model parameters</h3><label class="setting-control"><span>Temperature</span><input v-model.number="temperature" type="number" min="0.1" max="2" step="0.1"/></label><label class="setting-control"><span>Top P</span><input v-model.number="topP" type="number" min="0.05" max="1" step="0.05"/></label><label class="setting-control"><span>Top K</span><input v-model.number="topK" type="number" min="1" max="100" step="1"/></label><div class="info-setting"><span>Voice method</span><strong>Zero-shot</strong></div><p class="settings-note"><Info :size="14"/> ค่าเริ่มต้นอิงตามคำแนะนำของ MOSS; ปรับได้ต่อการสร้าง</p></div>
             </section>
           </div>
 
@@ -287,7 +295,7 @@ onUnmounted(() => {
           </section>
         </template>
 
-        <template v-if="page === 'voices'"><div class="page-header"><div><div class="eyebrow"><Library :size="14"/> YOUR LIBRARY</div><h1>Voice <em>Library.</em></h1><p>จัดการเสียงต้นแบบสำหรับ Zero-shot Voice Cloning และใช้ Voice ID กับแอปอื่น</p></div><button class="button primary" @click="uploadOpen = true"><Plus :size="17"/> Add a voice</button></div><div class="panel library-panel"><div class="results-heading"><div><h2><Mic2 :size="20" class="heading-icon"/> Saved profiles</h2><p>{{ voices.length }} voices available</p></div></div><div v-if="voices.length" class="voice-list"><div v-for="voice in voices" :key="voice.id" class="voice-item"><div class="voice-item-icon"><AudioLines :size="21"/></div><div class="voice-item-info"><strong>{{ voice.name }}</strong><span>{{ voice.language }} · {{ dateLabel(voice.created_at) }} · {{ voice.id.slice(0,8) }}</span></div><div class="voice-item-actions"><button class="small-button" @click="selectedVoice=voice.id; navigate('studio')"><WandSparkles :size="15"/> Use voice</button><button class="icon-button danger-icon" title="Delete voice" @click="removeVoice(voice)"><Trash2 :size="17"/></button></div></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Mic2 :size="29"/></div><strong>No voices saved yet</strong><span>เพิ่มไฟล์เสียง WAV ที่มีสิทธิ์ใช้งาน เพื่อโคลนเสียงของตัวละคร</span><button class="button secondary" @click="uploadOpen=true"><UploadCloud :size="16"/> Upload reference</button></div></div></template>
+        <template v-if="page === 'voices'"><div class="page-header"><div><div class="eyebrow"><Library :size="14"/> YOUR LIBRARY</div><h1>Voice <em>Library.</em></h1><p>จัดการเสียงต้นแบบสำหรับ Zero-shot Voice Cloning และใช้ Voice ID กับแอปอื่น</p></div><button class="button primary" @click="uploadOpen = true"><Plus :size="17"/> Add a voice</button></div><div class="panel library-panel"><div class="results-heading"><div><h2><Mic2 :size="20" class="heading-icon"/> Saved profiles</h2><p>{{ voices.length }} voices available</p></div></div><div v-if="voices.length" class="voice-list"><div v-for="voice in voices" :key="voice.id" class="voice-item"><div class="voice-item-icon"><AudioLines :size="21"/></div><div class="voice-item-info"><strong>{{ voice.name }}<small v-if="voice.character" class="character-tag">{{ voice.character }}</small></strong><span>{{ voice.language }} · {{ dateLabel(voice.created_at) }} · {{ voice.id.slice(0,8) }}</span></div><div class="voice-item-actions"><button class="small-button" @click="selectedVoice=voice.id; navigate('studio')"><WandSparkles :size="15"/> Use voice</button><button class="icon-button danger-icon" title="Delete voice" @click="removeVoice(voice)"><Trash2 :size="17"/></button></div></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Mic2 :size="29"/></div><strong>No voices saved yet</strong><span>เพิ่มไฟล์เสียง WAV ที่มีสิทธิ์ใช้งาน เพื่อโคลนเสียงของตัวละคร</span><button class="button secondary" @click="uploadOpen=true"><UploadCloud :size="16"/> Upload reference</button></div></div></template>
 
         <template v-if="page === 'history'"><div class="page-header"><div><div class="eyebrow"><Clock3 :size="14"/> AUDIO OUTPUTS</div><h1>Generation <em>History.</em></h1><p>ตรวจสถานะงานย้อนหลัง เล่น และดาวน์โหลดไฟล์เสียงที่สร้างไว้</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Refresh</button></div><div class="panel library-panel"><div class="results-heading"><h2><Headphones :size="20" class="heading-icon"/> Recent jobs</h2><span class="waiting-tag">{{ historyJobs.length }} records</span></div><div v-if="historyJobs.length" class="job-list"><div v-for="job in historyJobs" :key="job.id" class="job-item"><div class="job-icon"><FileAudio :size="20"/></div><div class="job-info"><strong>{{ job.text }}</strong><span>{{ job.language }} · {{ dateLabel(job.created_at) }}</span><small v-if="job.error" class="error-text">{{ job.error }}</small></div><span class="status-tag" :class="job.status">{{ job.status }}</span><button class="icon-button" :disabled="job.status !== 'completed'" @click="playAudio(job.audio_url)" title="Play"><Play :size="16"/></button><button class="icon-button" :disabled="job.status !== 'completed'" @click="downloadAudio(job.audio_url, `moss-${job.id}.wav`)" title="Download"><ArrowDownToLine :size="16"/></button></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Clock3 :size="29"/></div><strong>No generations yet</strong><span>สร้างเสียงจากหน้า Playground แล้วผลลัพธ์จะอยู่ที่นี่</span><button class="button secondary" @click="navigate('studio')">Open Playground</button></div></div></template>
 
@@ -298,6 +306,6 @@ onUnmounted(() => {
       </div>
     </main>
 
-    <div v-if="uploadOpen" class="modal-overlay" @click.self="uploadOpen = false"><div class="modal"><div class="modal-top"><div><div class="eyebrow">NEW VOICE PROFILE</div><h2>Add reference voice</h2><p>สร้างโปรไฟล์เสียงสำหรับ Zero-shot Voice Cloning</p></div><button class="icon-button" @click="uploadOpen=false"><X :size="19"/></button></div><label class="modal-label">Voice name</label><input class="modal-input" v-model="uploadName" maxlength="80" placeholder="เช่น Yuna, Narrator A"/><label class="modal-label">Reference language</label><select class="modal-input" v-model="uploadLanguage"><option value="Thai">🇹🇭 Thai</option><option value="English">🇺🇸 English</option></select><label class="modal-label">Reference transcript (recommended for cloning)</label><textarea class="modal-input" rows="2" v-model="uploadTranscript" maxlength="1000" placeholder="พิมพ์ข้อความที่พูดจริงในเสียงต้นฉบับ"></textarea><label class="modal-label">Reference audio</label><input type="file" class="hidden-input" accept=".wav,audio/wav" ref="pickedFileInput" @change="fileChange"/><div class="modal-file" @click="pickedFileInput?.click()"><UploadCloud :size="24"/><strong>{{ uploadFile?.name || 'Click to choose a WAV file' }}</strong><span>PCM WAV · 1–60 seconds · recommended 3–20 seconds · up to 30 MB</span></div><label class="consent"><input type="checkbox" v-model="uploadConsent"/><span>ฉันมีสิทธิ์หรือได้รับความยินยอมให้ใช้เสียงนี้เพื่อสร้างเสียงสังเคราะห์</span></label><div class="modal-actions"><button class="button ghost" @click="uploadOpen=false">Cancel</button><button class="button primary" :disabled="uploading" @click="uploadVoice"><UploadCloud :size="17"/> {{ uploading ? 'Uploading...' : 'Save Voice Profile' }}</button></div></div></div>
+    <div v-if="uploadOpen" class="modal-overlay" @click.self="uploadOpen = false"><div class="modal"><div class="modal-top"><div><div class="eyebrow">NEW VOICE PROFILE</div><h2>Add reference voice</h2><p>สร้างโปรไฟล์เสียงสำหรับ Zero-shot Voice Cloning</p></div><button class="icon-button" @click="uploadOpen=false"><X :size="19"/></button></div><label class="modal-label">Voice name</label><input class="modal-input" v-model="uploadName" maxlength="80" placeholder="เช่น Yuna, Narrator A"/><label class="modal-label">Character preset (optional)</label><input class="modal-input" v-model="uploadCharacter" maxlength="80" placeholder="Yuna / companion profile"/><label class="modal-label">Reference language</label><select class="modal-input" v-model="uploadLanguage"><option value="Thai">🇹🇭 Thai</option><option value="English">🇺🇸 English</option></select><label class="modal-label">Reference transcript (recommended for cloning)</label><textarea class="modal-input" rows="2" v-model="uploadTranscript" maxlength="1000" placeholder="พิมพ์ข้อความที่พูดจริงในเสียงต้นฉบับ"></textarea><label class="modal-label">Reference audio</label><input type="file" class="hidden-input" accept=".wav,audio/wav" ref="pickedFileInput" @change="fileChange"/><div class="modal-file" @click="pickedFileInput?.click()"><UploadCloud :size="24"/><strong>{{ uploadFile?.name || 'Click to choose a WAV file' }}</strong><span>PCM WAV · 1–60 seconds · recommended 3–20 seconds · up to 30 MB</span></div><label class="consent"><input type="checkbox" v-model="uploadConsent"/><span>ฉันมีสิทธิ์หรือได้รับความยินยอมให้ใช้เสียงนี้เพื่อสร้างเสียงสังเคราะห์</span></label><div class="modal-actions"><button class="button ghost" @click="uploadOpen=false">Cancel</button><button class="button primary" :disabled="uploading" @click="uploadVoice"><UploadCloud :size="17"/> {{ uploading ? 'Uploading...' : 'Save Voice Profile' }}</button></div></div></div>
   </div>
 </template>

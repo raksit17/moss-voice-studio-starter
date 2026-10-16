@@ -69,12 +69,17 @@ def test_streaming_and_voice_reference(monkeypatch):
     monkeypatch.setattr(streaming, 'create_client',
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(fake_upstream)))
     assert client.get('/v1/stream/status', headers=headers).json()['ready']
-    result = client.post('/v1/stream', headers=headers, json={
+    browser_headers = {**headers, 'Origin': 'http://127.0.0.1:5173'}
+    result = client.post('/v1/stream', headers=browser_headers, json={
         'text': 'สวัสดีค่ะ', 'language': 'Thai', 'voice_id': voice.json()['id']})
     assert result.status_code == 200, result.text
     assert len(result.content) == 1600
     assert result.headers['x-audio-encoding'] == 'pcm_s16le'
+    assert 'x-sample-rate' in result.headers['access-control-expose-headers'].lower()
     assert requests[0]['stream'] is True
+    assert requests[0]['audio_temperature'] == 1.7
+    assert requests[0]['audio_top_p'] == 0.8
+    assert requests[0]['audio_top_k'] == 25
     assert requests[0]['references'][0]['text'] == 'นี่คือเสียงต้นแบบ'
     assert requests[0]['references'][0]['audio_path'].startswith('data:audio/wav;base64,')
     assert client.post('/v1/stream', headers=headers,

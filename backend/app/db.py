@@ -27,7 +27,8 @@ def initialize() -> None:
           language TEXT NOT NULL,
           file_path TEXT NOT NULL,
           created_at TEXT NOT NULL,
-          transcript TEXT NOT NULL DEFAULT ''
+          transcript TEXT NOT NULL DEFAULT '',
+          character TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS jobs (
           id TEXT PRIMARY KEY,
@@ -39,6 +40,7 @@ def initialize() -> None:
           output_path TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
+          settings_json TEXT NOT NULL DEFAULT '{}',
           FOREIGN KEY (voice_id) REFERENCES voices(id)
         );
         CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
@@ -46,6 +48,11 @@ def initialize() -> None:
         fields = {row[1] for row in con.execute('PRAGMA table_info(voices)')}
         if 'transcript' not in fields:
             con.execute("ALTER TABLE voices ADD COLUMN transcript TEXT NOT NULL DEFAULT ''")
+        if 'character' not in fields:
+            con.execute("ALTER TABLE voices ADD COLUMN character TEXT NOT NULL DEFAULT ''")
+        job_fields = {row[1] for row in con.execute('PRAGMA table_info(jobs)')}
+        if 'settings_json' not in job_fields:
+            con.execute("ALTER TABLE jobs ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'")
         con.execute("UPDATE jobs SET status='failed', error='Server restarted before completion', updated_at=? WHERE status IN ('queued','running')", (now_iso(),))
 
 

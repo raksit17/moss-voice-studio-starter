@@ -4,6 +4,7 @@ from uuid import uuid4
 import logging
 import threading
 import wave
+import json
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=['GET', 'POST', 'DELETE'],
     allow_headers=['Content-Type', 'X-API-Key'],
+    expose_headers=['X-Audio-Encoding', 'X-Sample-Rate', 'X-Channels'],
 )
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='moss-inference')
 slots = threading.BoundedSemaphore(8)
@@ -39,6 +41,9 @@ class GenerateBody(BaseModel):
     text: str = Field(min_length=1, max_length=600)
     language: str = 'Thai'
     voice_id: str | None = None
+    temperature: float = Field(default=1.7, ge=0.1, le=2.0)
+    top_p: float = Field(default=0.8, ge=0.05, le=1.0)
+    top_k: int = Field(default=25, ge=1, le=100)
 
 
 def public_job(row: dict) -> dict:
@@ -47,6 +52,7 @@ def public_job(row: dict) -> dict:
         'language': row['language'], 'status': row['status'], 'error': row['error'],
         'created_at': row['created_at'], 'updated_at': row['updated_at'],
         'audio_url': f"/v1/jobs/{row['id']}/audio" if row['status'] == 'completed' else None,
+        'settings': json.loads(row.get('settings_json') or '{}'),
     }
 
 
@@ -66,7 +72,7 @@ def health():
 
 @app.get('/v1/voices', dependencies=[Depends(authorize)])
 def list_voices():
-    rows = query_all('SELECT id, name, language, transcript, created_at FROM voices ORDER BY created_at DESC')
+    rows = query_all('SELECT id, name, language, transcript, character, created_at FROM voices ORDER BY created_at DESC')
     return {'items': rows}
 
 
@@ -76,6 +82,7 @@ async def upload_voice(
     language: str = Form('Thai'),
     consent: bool = Form(False),
     transcript: str = Form('', max_length=1000),
+    character: str = Form('', max_length=80),
     audio: UploadFile = File(...),
 ):
     if language not in ('Thai', 'English'):
@@ -104,9 +111,10 @@ async def upload_voice(
         path.unlink(missing_ok=True)
         raise HTTPException(422, detail=str(exc)) from exc
     timestamp = now_iso()
-    execute('INSERT INTO voices(id,name,language,file_path,created_at,transcript) VALUES (?,?,?,?,?,?)',
-            (voice_id, name.strip(), language, str(path.resolve()), timestamp, transcript.strip()))
-    return {'id': voice_id, 'name': name.strip(), 'language': language, 'transcript': transcript.strip(), 'created_at': timestamp}
+    execute('INSERT INTO voices(id,name,language,file_path,created_at,transcript,character) VALUES (?,?,?,?,?,?,?)',
+            (voice_id, name.strip(), language, str(path.resolve()), timestamp, transcript.strip(), character.strip()))
+    return {'id': voice_id, 'name': name.strip(), 'language': language, 'transcript': transcript.strip(),
+            'character': character.strip(), 'created_at': timestamp}
 
 
 @app.get('/v1/voices/{voice_id}/audio', dependencies=[Depends(authorize)])
@@ -128,11 +136,11 @@ def delete_voice(voice_id: str):
     return {'deleted': True}
 
 
-def _process_job(job_id: str, text: str, language: str, reference: Path | None) -> None:
+def _process_job(job_id: str, text: str, language: str, reference: Path | None, generation: dict) -> None:
     output = settings.data_dir / 'generations' / f'{job_id}.wav'
     try:
         execute('UPDATE jobs SET status=?, updated_at=? WHERE id=?', ('running', now_iso(), job_id))
-        engine.synthesize(text, language, reference, output)
+        engine.synthesize(text, language, reference, output, generation)
         execute('UPDATE jobs SET status=?, output_path=?, updated_at=? WHERE id=?',
                 ('completed', str(output.resolve()), now_iso(), job_id))
     except Exception as exc:
@@ -157,11 +165,13 @@ def create_job(body: GenerateBody):
         raise HTTPException(429, detail='Generation queue full (8 jobs)')
     job_id = str(uuid4())
     timestamp = now_iso()
+    generation = {'temperature': body.temperature, 'top_p': body.top_p, 'top_k': body.top_k}
     try:
-        execute('INSERT INTO jobs(id,voice_id,text,language,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
-                (job_id, body.voice_id, body.text.strip(), body.language, 'queued', timestamp, timestamp))
+        execute('INSERT INTO jobs(id,voice_id,text,language,status,created_at,updated_at,settings_json) VALUES(?,?,?,?,?,?,?,?)',
+                (job_id, body.voice_id, body.text.strip(), body.language, 'queued', timestamp, timestamp,
+                 json.dumps(generation)))
         executor.submit(_process_job, job_id, body.text.strip(), body.language,
-                        Path(voice['file_path']) if voice else None)
+                        Path(voice['file_path']) if voice else None, generation)
     except Exception:
         slots.release()
         raise

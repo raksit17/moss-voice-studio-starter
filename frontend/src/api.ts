@@ -4,6 +4,7 @@ export interface Voice {
   language: 'Thai' | 'English'
   created_at: string
   transcript?: string
+  character?: string
 }
 
 export interface Job {
@@ -55,19 +56,21 @@ export interface StreamStatus { configured: boolean; ready: boolean; reason: str
 export const getStreamStatus = () => request<StreamStatus>('/v1/stream/status')
 export const getVoices = async () => (await request<{ items: Voice[] }>('/v1/voices')).items
 export const getJobs = async () => (await request<{ items: Job[] }>('/v1/jobs')).items
-export const createJob = (text: string, language: string, voiceId: string | null) =>
+export interface GenerationSettings { temperature: number; top_p: number; top_k: number }
+export const createJob = (text: string, language: string, voiceId: string | null, settings: GenerationSettings) =>
   request<{ id: string; status: string }>('/v1/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, language, voice_id: voiceId }),
+    body: JSON.stringify({ text, language, voice_id: voiceId, ...settings }),
   })
 export const deleteVoice = (id: string) => request<{ deleted: boolean }>(`/v1/voices/${id}`, { method: 'DELETE' })
-export const createVoice = (name: string, language: string, file: File, transcript = '') => {
+export const createVoice = (name: string, language: string, file: File, transcript = '', character = '') => {
   const form = new FormData()
   form.append('name', name)
   form.append('language', language)
   form.append('consent', 'true')
   form.append('transcript', transcript)
+  form.append('character', character)
   form.append('audio', file)
   return request<Voice>('/v1/voices', { method: 'POST', body: form })
 }
@@ -85,11 +88,12 @@ export async function streamSpeech(
   voiceId: string | null,
   instructions: string,
   signal: AbortSignal,
+  settings: GenerationSettings,
 ): Promise<Response> {
   const response = await fetch(BASE_URL + '/v1/stream', {
     method: 'POST',
     headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, language, voice_id: voiceId, instructions: instructions || null }),
+    body: JSON.stringify({ text, language, voice_id: voiceId, instructions: instructions || null, ...settings }),
     signal,
   })
   if (!response.ok) {

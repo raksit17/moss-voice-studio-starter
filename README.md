@@ -10,8 +10,9 @@ A standalone **Voice Library + TTS Playground + REST API** using **MOSS-TTS-Loca
 - **Real progressive PCM streaming** via optional separately running SGLang-Omni
 - Web Audio live player with stop/cancel, reference transcripts, and streaming status
 - Phase 3 NestJS client, PCM relay controller and Live2D RMS speech/action bridge
-- Upload authorized **PCM WAV** reference voice, optionally enter the exact transcript, and reuse by `voice_id`
+- Upload authorized **PCM WAV** reference voice, save its exact transcript and per-character label, and reuse by `voice_id`
 - Synthesize Thai/English, with or without a reference clip
+- Adjust temperature, top-p, and top-k for each WAV or progressive stream request
 - Queue up to 8 jobs, run one at a time on the GPU, poll jobs, play/download resulting WAV
 - API-key authentication for local use; documented client integration
 - Model is lazily loaded on the first generation (downloaded on first use unless local path configured)

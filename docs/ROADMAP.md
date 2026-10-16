@@ -21,6 +21,7 @@
 - Audio analyser RMS -> Live2D mouth-open parameter (ParamA) with smoothing
 - Abort support / speech motion sync / safe handling of action-only segments
 - Character voice IDs and reference-transcript persistence
+- Character preset labels and per-generation temperature/top-p/top-k controls for WAV and streaming
 - GitHub Actions checks for backend tests and frontend Vue/TypeScript build
 - Integration/security guide for backend-only production API keys
 

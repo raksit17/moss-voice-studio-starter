@@ -26,6 +26,9 @@ class StreamBody(BaseModel):
     language: Literal['Thai', 'English'] = 'Thai'
     voice_id: str | None = None
     instructions: str | None = Field(default=None, max_length=240)
+    temperature: float = Field(default=1.7, ge=0.1, le=2.0)
+    top_p: float = Field(default=0.8, ge=0.05, le=1.0)
+    top_k: int = Field(default=25, ge=1, le=100)
 
 
 def make_payload(body: StreamBody) -> dict:
@@ -37,6 +40,9 @@ def make_payload(body: StreamBody) -> dict:
         'stream': True,
         'response_format': 'pcm',
         'stream_format': 'audio',
+        'audio_temperature': body.temperature,
+        'audio_top_p': body.top_p,
+        'audio_top_k': body.top_k,
     }
     if body.instructions:
         payload['instructions'] = body.instructions.strip()
@@ -77,8 +83,8 @@ async def stream_pcm(body: StreamBody) -> StreamingResponse:
         if upstream.status_code >= 400:
             detail = (await upstream.aread())[:400].decode('utf-8', errors='replace')
             raise HTTPException(502, detail=f'SGLang HTTP {upstream.status_code}: {detail}')
-        sample_rate = upstream.headers.get('x-moss-sample-rate', '48000')
-        channels = upstream.headers.get('x-moss-channels', '1')
+        sample_rate = upstream.headers.get('x-moss-sample-rate', upstream.headers.get('x-sample-rate', '48000'))
+        channels = upstream.headers.get('x-moss-channels', upstream.headers.get('x-channels', '1'))
         if sample_rate != '48000' or channels != '1':
             raise HTTPException(502, detail='Unexpected PCM format returned by SGLang')
     except HTTPException:

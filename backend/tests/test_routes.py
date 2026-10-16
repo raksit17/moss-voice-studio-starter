@@ -32,11 +32,14 @@ def test_auth_and_health():
 
 def test_upload_and_list_voice():
     r = client.post('/v1/voices', headers=HEADERS,
-                    data={'name': 'Yuna', 'language': 'Thai', 'consent': 'true'},
+                    data={'name': 'Yuna', 'language': 'Thai', 'consent': 'true',
+                          'transcript': 'สวัสดีค่ะ', 'character': 'Yuna'},
                     files={'audio': ('yuna.wav', fake_wav(), 'audio/wav')})
     assert r.status_code == 201, r.text
     voice_id = r.json()['id']
-    assert any(v['id'] == voice_id for v in client.get('/v1/voices', headers=HEADERS).json()['items'])
+    voice = next(v for v in client.get('/v1/voices', headers=HEADERS).json()['items'] if v['id'] == voice_id)
+    assert voice['transcript'] == 'สวัสดีค่ะ'
+    assert voice['character'] == 'Yuna'
     assert client.get(f'/v1/voices/{voice_id}/audio', headers=HEADERS).status_code == 200
     assert client.delete(f'/v1/voices/{voice_id}', headers=HEADERS).status_code == 200
 
@@ -45,6 +48,8 @@ def test_invalid_generation():
     assert client.post('/v1/jobs', headers=HEADERS, json={'text': 'x', 'language': 'Klingon'}).status_code == 422
     assert client.post('/v1/jobs', headers=HEADERS,
                        json={'text': 'hello', 'language': 'Thai', 'voice_id': 'unknown'}).status_code == 404
+    assert client.post('/v1/jobs', headers=HEADERS,
+                       json={'text': 'hello', 'temperature': 9}).status_code == 422
 
 
 def test_generation_lifecycle(monkeypatch):
@@ -52,7 +57,7 @@ def test_generation_lifecycle(monkeypatch):
     import time
     from app.engine import engine
 
-    def stub_synthesis(_text, _language, _reference, output):
+    def stub_synthesis(_text, _language, _reference, output, _generation=None):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(fake_wav())
 
@@ -70,3 +75,4 @@ def test_generation_lifecycle(monkeypatch):
     wav_response = client.get(f'/v1/jobs/{job_id}/audio', headers=HEADERS)
     assert wav_response.status_code == 200
     assert wav_response.content.startswith(b'RIFF')
+    assert job['settings'] == {'temperature': 1.7, 'top_p': 0.8, 'top_k': 25}

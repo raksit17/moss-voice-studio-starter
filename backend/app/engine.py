@@ -56,7 +56,8 @@ class MossEngine:
             self.last_error = str(exc)
             raise
 
-    def synthesize(self, text: str, language: str, reference: Path | None, output: Path) -> None:
+    def synthesize(self, text: str, language: str, reference: Path | None, output: Path,
+                   generation: dict | None = None) -> None:
         # Single inference at a time: safeguards against GPU OOM on a local workstation.
         with self._lock:
             self._load()
@@ -71,15 +72,16 @@ class MossEngine:
             input_ids = batch['input_ids'].to(self.device_name)
             attention_mask = batch['attention_mask'].to(self.device_name)
             with torch.inference_mode():
+                generation = generation or {}
                 output_tokens = self._model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     max_new_tokens=settings.moss_max_new_tokens,
                     do_sample=True,
-                    audio_temperature=1.7,
-                    audio_top_p=0.8,
-                    audio_top_k=25,
-                    audio_repetition_penalty=1.0,
+                    audio_temperature=generation.get('temperature', 1.7),
+                    audio_top_p=generation.get('top_p', 0.8),
+                    audio_top_k=generation.get('top_k', 25),
+                    audio_repetition_penalty=generation.get('repetition_penalty', 1.0),
                 )
                 messages = self._processor.decode(output_tokens)
                 audio = next((m.audio_codes_list[0] for m in messages if m and m.audio_codes_list), None)
