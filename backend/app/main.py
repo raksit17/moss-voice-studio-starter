@@ -14,11 +14,13 @@ from pydantic import BaseModel, Field
 from .config import settings
 from .db import execute, initialize, now_iso, query_all, query_one
 from .engine import engine
+from .model_manager import ImportModel, import_model, list_models, resolve_model, register_original, activate, default_model
 from .streaming import StreamBody, stream_pcm, status as stream_status
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('moss-studio')
 initialize()
+register_original()
 app = FastAPI(title='MOSS Voice Studio API', version='0.1.0')
 app.add_middleware(
     CORSMiddleware,
@@ -41,6 +43,7 @@ class GenerateBody(BaseModel):
     text: str = Field(min_length=1, max_length=600)
     language: str = 'Thai'
     voice_id: str | None = None
+    model_id: str | None = None
     temperature: float = Field(default=1.7, ge=0.1, le=2.0)
     top_p: float = Field(default=0.8, ge=0.05, le=1.0)
     top_k: int = Field(default=25, ge=1, le=100)
@@ -48,7 +51,7 @@ class GenerateBody(BaseModel):
 
 def public_job(row: dict) -> dict:
     return {
-        'id': row['id'], 'voice_id': row['voice_id'], 'text': row['text'],
+        'id': row['id'], 'voice_id': row['voice_id'], 'model_id': row.get('model_id'), 'text': row['text'],
         'language': row['language'], 'status': row['status'], 'error': row['error'],
         'created_at': row['created_at'], 'updated_at': row['updated_at'],
         'audio_url': f"/v1/jobs/{row['id']}/audio" if row['status'] == 'completed' else None,
@@ -62,7 +65,8 @@ def health():
         'ok': True,
         'engine': engine.state,
         'device': engine.device_name,
-        'model': settings.moss_model_id,
+        'model': (default_model() or {}).get('name'),
+        'loaded_model_id': engine.loaded_model_id,
         'error': engine.last_error,
         'sample_rate': 48000,
         'streaming': bool(settings.sglang_base_url),
@@ -136,11 +140,11 @@ def delete_voice(voice_id: str):
     return {'deleted': True}
 
 
-def _process_job(job_id: str, text: str, language: str, reference: Path | None, generation: dict) -> None:
+def _process_job(job_id: str, text: str, language: str, reference: Path | None, generation: dict, selected_model: dict) -> None:
     output = settings.data_dir / 'generations' / f'{job_id}.wav'
     try:
         execute('UPDATE jobs SET status=?, updated_at=? WHERE id=?', ('running', now_iso(), job_id))
-        engine.synthesize(text, language, reference, output, generation)
+        engine.synthesize(text, language, reference, output, generation, selected_model)
         execute('UPDATE jobs SET status=?, output_path=?, updated_at=? WHERE id=?',
                 ('completed', str(output.resolve()), now_iso(), job_id))
     except Exception as exc:
@@ -161,17 +165,18 @@ def create_job(body: GenerateBody):
     voice = query_one('SELECT * FROM voices WHERE id=?', (body.voice_id,)) if body.voice_id else None
     if body.voice_id and not voice:
         raise HTTPException(404, detail='Selected voice not found')
+    model = resolve_model(body.model_id)
     if not slots.acquire(blocking=False):
         raise HTTPException(429, detail='Generation queue full (8 jobs)')
     job_id = str(uuid4())
     timestamp = now_iso()
     generation = {'temperature': body.temperature, 'top_p': body.top_p, 'top_k': body.top_k}
     try:
-        execute('INSERT INTO jobs(id,voice_id,text,language,status,created_at,updated_at,settings_json) VALUES(?,?,?,?,?,?,?,?)',
+        execute('INSERT INTO jobs(id,voice_id,text,language,status,created_at,updated_at,settings_json,model_id) VALUES(?,?,?,?,?,?,?,?,?)',
                 (job_id, body.voice_id, body.text.strip(), body.language, 'queued', timestamp, timestamp,
-                 json.dumps(generation)))
+                 json.dumps(generation), model["id"]))
         executor.submit(_process_job, job_id, body.text.strip(), body.language,
-                        Path(voice['file_path']) if voice else None, generation)
+                        Path(voice['file_path']) if voice else None, generation, model)
     except Exception:
         slots.release()
         raise
@@ -207,3 +212,75 @@ async def streaming_status():
 async def stream_speech(body: StreamBody):
     """Return progressive raw PCM directly from the running SGLang model server."""
     return await stream_pcm(body)
+
+@app.get('/v1/models', dependencies=[Depends(authorize)])
+def models_list():
+    return {'items': list_models()}
+
+
+@app.post('/v1/models/import', status_code=201, dependencies=[Depends(authorize)])
+def models_import(body: ImportModel):
+    return import_model(body)
+
+
+@app.post('/v1/models/{model_id}/activate', dependencies=[Depends(authorize)])
+def models_activate(model_id: str):
+    return activate(model_id)
+
+
+@app.get('/v1/models/runtime', dependencies=[Depends(authorize)])
+def models_runtime():
+    return {'state': engine.state, 'loaded_model_id': engine.loaded_model_id,
+            'device': engine.device_name, 'error': engine.last_error}
+
+
+@app.post('/v1/models/{model_id}/load', dependencies=[Depends(authorize)])
+def models_load(model_id: str):
+    model = resolve_model(model_id)
+    executor.submit(engine.load_model, model).result()
+    return models_runtime()
+
+
+@app.post('/v1/models/{model_id}/unload', dependencies=[Depends(authorize)])
+def models_unload(model_id: str):
+    if engine.loaded_model_id != model_id:
+        raise HTTPException(409, 'This model is not loaded')
+    executor.submit(engine.unload).result()
+    return models_runtime()
+
+
+@app.post('/v1/models/{model_id}/validate', dependencies=[Depends(authorize)])
+def models_validate(model_id: str):
+    model = query_one('SELECT * FROM models WHERE id=?', (model_id,))
+    if not model:
+        raise HTTPException(404, 'Model not found')
+    if model['precision'] == 'int8':
+        raise HTTPException(501, 'INT8 custom checkpoint loader/exporter is not verified; refusing unsafe validation')
+    path = Path(model['model_path'])
+    if not path.exists():
+        raise HTTPException(422, 'Validation of a remote model requires explicit trusted runtime configuration')
+    from uuid import uuid4 as _uuid
+    test_path = settings.data_dir / 'generations' / f'validation-{_uuid()}.wav'
+    def check():
+        try:
+            engine.unload()
+            engine.synthesize('สวัสดีค่ะ', 'Thai', None, test_path, {}, model)
+            with wave.open(str(test_path), 'rb') as w:
+                if w.getnframes() == 0:
+                    raise ValueError('Empty WAV')
+            engine.unload()
+            engine.load_model(model)
+        finally:
+            test_path.unlink(missing_ok=True)
+    try:
+        executor.submit(check).result()
+    except Exception as exc:
+        execute("UPDATE models SET status='failed' WHERE id=?", (model_id,))
+        raise HTTPException(422, 'Validation failed: ' + str(exc)[:300]) from exc
+    execute("UPDATE models SET status='ready' WHERE id=?", (model_id,))
+    return query_one('SELECT * FROM models WHERE id=?', (model_id,))
+
+
+@app.post('/v1/models/export', dependencies=[Depends(authorize)])
+def models_export():
+    raise HTTPException(501, 'One-time INT8 export needs an architecture-specific verified serialization and reload implementation')
