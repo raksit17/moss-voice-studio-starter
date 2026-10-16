@@ -24,10 +24,10 @@ export async function playPcmResponse(
       const { done, value } = await reader.read()
       if (done) break
       if (!value?.length) continue
-      const bytes = new Uint8Array(value.length + (carry === null ? 0 : 1))
+      const bytes: Uint8Array = new Uint8Array(value.length + (carry === null ? 0 : 1))
       if (carry !== null) bytes[0] = carry
       bytes.set(value, carry === null ? 0 : 1)
-      const available = bytes.length - (bytes.length % 2)
+      const available: number = bytes.length - (bytes.length % 2)
       carry = available < bytes.length ? bytes[available] : null
       if (!available) continue
       const samples = available / 2
