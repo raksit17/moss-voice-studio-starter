@@ -131,14 +131,12 @@ class MossEngine:
             processor = AutoProcessor.from_pretrained(
                 selected["model_path"],
                 trust_remote_code=True,
-                local_files_only=Path(selected["model_path"]).exists(),
             )
             processor.audio_tokenizer = processor.audio_tokenizer.to(device)
 
             model = AutoModel.from_pretrained(
                 selected["model_path"],
                 trust_remote_code=True,
-                local_files_only=Path(selected["model_path"]).exists(),
                 attn_implementation=attn,
                 torch_dtype=dtype,
             ).to(device)
