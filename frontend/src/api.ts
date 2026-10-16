@@ -10,6 +10,7 @@ export interface Voice {
 export interface Job {
   id: string
   voice_id: string | null
+  model_id?: string | null
   text: string
   language: string
   status: 'queued' | 'running' | 'completed' | 'failed'
@@ -57,11 +58,11 @@ export const getStreamStatus = () => request<StreamStatus>('/v1/stream/status')
 export const getVoices = async () => (await request<{ items: Voice[] }>('/v1/voices')).items
 export const getJobs = async () => (await request<{ items: Job[] }>('/v1/jobs')).items
 export interface GenerationSettings { temperature: number; top_p: number; top_k: number }
-export const createJob = (text: string, language: string, voiceId: string | null, settings: GenerationSettings) =>
+export const createJob = (text: string, language: string, voiceId: string | null, settings: GenerationSettings, modelId?: string | null) =>
   request<{ id: string; status: string }>('/v1/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, language, voice_id: voiceId, ...settings }),
+    body: JSON.stringify({ text, language, voice_id: voiceId, model_id: modelId || null, ...settings }),
   })
 export const deleteVoice = (id: string) => request<{ deleted: boolean }>(`/v1/voices/${id}`, { method: 'DELETE' })
 export const createVoice = (name: string, language: string, file: File, transcript = '', character = '') => {
@@ -102,3 +103,27 @@ export async function streamSpeech(
   }
   return response
 }
+
+export interface SavedModel {
+  id: string
+  name: string
+  model_path: string
+  precision: string
+  status: 'ready' | 'pending_validation' | 'failed'
+  is_default: number
+  created_at: string
+}
+export interface ModelRuntime {
+  state: string
+  loaded_model_id: string | null
+  device: string
+  error: string | null
+}
+export const getModels = async () => (await request<{items: SavedModel[]}>('/v1/models')).items
+export const getModelRuntime = () => request<ModelRuntime>('/v1/models/runtime')
+export const importModel = (name: string, model_path: string, precision: string) =>
+  request<SavedModel>('/v1/models/import', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name,model_path,precision}) })
+export const activateModel = (id: string) => request<SavedModel>(`/v1/models/${id}/activate`, {method:'POST'})
+export const loadModel = (id: string) => request<ModelRuntime>(`/v1/models/${id}/load`, {method:'POST'})
+export const unloadModel = (id: string) => request<ModelRuntime>(`/v1/models/${id}/unload`, {method:'POST'})
+export const validateModel = (id: string) => request<SavedModel>(`/v1/models/${id}/validate`, {method:'POST'})
