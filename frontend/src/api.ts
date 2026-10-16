@@ -3,6 +3,7 @@ export interface Voice {
   name: string
   language: 'Thai' | 'English'
   created_at: string
+  transcript?: string
 }
 
 export interface Job {
@@ -25,6 +26,7 @@ export interface Health {
   error: string | null
   sample_rate: number
   streaming: boolean
+  stream_backend?: string | null
 }
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8001'
@@ -49,6 +51,8 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export const getHealth = () => request<Health>('/v1/health')
+export interface StreamStatus { configured: boolean; ready: boolean; reason: string | null }
+export const getStreamStatus = () => request<StreamStatus>('/v1/stream/status')
 export const getVoices = async () => (await request<{ items: Voice[] }>('/v1/voices')).items
 export const getJobs = async () => (await request<{ items: Job[] }>('/v1/jobs')).items
 export const createJob = (text: string, language: string, voiceId: string | null) =>
@@ -58,11 +62,12 @@ export const createJob = (text: string, language: string, voiceId: string | null
     body: JSON.stringify({ text, language, voice_id: voiceId }),
   })
 export const deleteVoice = (id: string) => request<{ deleted: boolean }>(`/v1/voices/${id}`, { method: 'DELETE' })
-export const createVoice = (name: string, language: string, file: File) => {
+export const createVoice = (name: string, language: string, file: File, transcript = '') => {
   const form = new FormData()
   form.append('name', name)
   form.append('language', language)
   form.append('consent', 'true')
+  form.append('transcript', transcript)
   form.append('audio', file)
   return request<Voice>('/v1/voices', { method: 'POST', body: form })
 }
@@ -70,4 +75,26 @@ export async function getAudio(path: string): Promise<string> {
   const res = await fetch(`${BASE_URL}${path}`, { headers: { 'X-API-Key': API_KEY } })
   if (!res.ok) throw new Error('ไม่สามารถโหลดไฟล์เสียงได้')
   return URL.createObjectURL(await res.blob())
+}
+
+
+/** The response body is progressive raw PCM, not a WAV blob. */
+export async function streamSpeech(
+  text: string,
+  language: 'Thai' | 'English',
+  voiceId: string | null,
+  instructions: string,
+  signal: AbortSignal,
+): Promise<Response> {
+  const response = await fetch(BASE_URL + '/v1/stream', {
+    method: 'POST',
+    headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, language, voice_id: voiceId, instructions: instructions || null }),
+    signal,
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}))
+    throw new Error(typeof data.detail === 'string' ? data.detail : 'Stream failed: HTTP ' + response.status)
+  }
+  return response
 }
