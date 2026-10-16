@@ -1,0 +1,17 @@
+# Install a CUDA-matched torch, torchaudio and torchcodec first.
+# The canonical tested versions are in the official OpenMOSS/MOSS-TTS pyproject.toml.
+transformers==5.0.0
+accelerate>=1.10.1
+huggingface_hub>=0.27.0
+safetensors==0.6.2
+numpy==2.1.0
+orjson==3.11.4
+tqdm==4.67.1
+PyYAML==6.0.3
+einops==0.8.1
+scipy==1.16.2
+librosa==0.11.0
+tiktoken==0.12.0
+psutil
+packaging
+sentencepiece>=0.2.0
