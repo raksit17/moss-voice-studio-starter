@@ -1,4 +1,4 @@
-# MOSS Voice Studio — Local Thai/English TTS Playground
+# MOSS Voice Studio — Phase 3: Local Thai/English TTS + Progressive Streaming
 
 A standalone **Voice Library + TTS Playground + REST API** using **MOSS-TTS-Local-Transformer-v1.5**. Built for experimenting with cloned voices and integrating with apps such as anime-ai-companion. The model weights are **not bundled**.
 
@@ -7,7 +7,10 @@ A standalone **Voice Library + TTS Playground + REST API** using **MOSS-TTS-Loca
 - Vue 3 + Vite + TypeScript modern dark frontend, Thai UI
 - FastAPI Python backend, SQLite history, voice reference file library
 - **Real** official MOSS Transformers inference adapter (no fabricated audio/demo synthesizer)
-- Upload authorized **PCM WAV** reference voice and reuse by `voice_id`
+- **Real progressive PCM streaming** via optional separately running SGLang-Omni
+- Web Audio live player with stop/cancel, reference transcripts, and streaming status
+- Phase 3 NestJS client, PCM relay controller and Live2D RMS speech/action bridge
+- Upload authorized **PCM WAV** reference voice, optionally enter the exact transcript, and reuse by `voice_id`
 - Synthesize Thai/English, with or without a reference clip
 - Queue up to 8 jobs, run one at a time on the GPU, poll jobs, play/download resulting WAV
 - API-key authentication for local use; documented client integration
@@ -86,6 +89,8 @@ All endpoints expect `X-API-Key: local-dev-key` in the default local configurati
 | GET | `/v1/jobs` | Recent jobs |
 | GET | `/v1/jobs/{id}` | Poll a job |
 | GET | `/v1/jobs/{id}/audio` | Download generated WAV |
+| GET | `/v1/stream/status` | Check SGLang-Omni health and availability |
+| POST | `/v1/stream` | Return genuine 48 kHz PCM chunks while synthesis is ongoing |
 
 Example call:
 
@@ -101,11 +106,57 @@ The POST returns job ID / status URL, not the audio itself. Poll the status endp
 
 Keep the model in **this service only**, not the companion project. A server-side NestJS example is included at `docs/anime-ai-companion-integration.ts`. Your companion backend sends LLM `speech` segments to `POST /v1/jobs` with the chosen voice ID, polls `GET /v1/jobs/{id}`, then downloads the authenticated WAV. Feed it to your web audio player and existing Live2D RMS lip-sync. Do not send LLM `action`/stage directions to TTS. API keys stay on the companion backend.
 
-For *low-latency realtime streaming*, a second-phase integration can use the upstream MOSS streaming runtime or SGLang-Omni. **This MVP uses queued full-WAV generation; it is not streaming.**
+The repository now includes **true progressive streaming** through SGLang-Omni, plus a separate queued WAV route. See the streaming setup below and `docs/COMPANION_PHASE3.md`.
+
+### Real-time progressive streaming (Phase 2 + 3)
+
+Run **SGLang-Omni** as a separate inference server; the built-in Transformers
+engine handles WAV jobs only. You must download the model and have a CUDA GPU
+with enough VRAM. Follow the official SGLang-Omni installation instructions
+(prefer Linux / WSL2 + CUDA for this engine):
+
+\`\`\`bash
+sgl-omni serve --model-path OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5 --port 8000
+\`\`\`
+
+Set in \`backend/.env\`:
+
+\`\`\`dotenv
+SGLANG_BASE_URL=http://127.0.0.1:8000
+\`\`\`
+
+Restart FastAPI, open **Voice Playground**, type a Thai sentence, select a
+consented voice profile and choose **Stream Speech (Live)**. To control cloning,
+set the **Reference transcript** to the words *actually spoken* in your sample
+when uploading the voice. The live API is:
+
+\`\`\`http
+POST /v1/stream
+X-API-Key: local-dev-key
+Content-Type: application/json
+
+{"text":"สวัสดีค่ะ วันนี้เป็นยังไงบ้างคะ","voice_id":null,"language":"Thai"}
+\`\`\`
+
+Response: raw \`pcm_s16le\` mono, 48000 samples/second; \`X-Audio-Encoding\`,
+\`X-Sample-Rate\` and \`X-Channels\` headers describe it. **It is not WAV.**
+The backend verifies voice ID, forwards the reference by data URI and streams
+bytes without waiting for the complete utterance. Stop button aborts browser
+playback. Use the \`/v1/stream/status\` endpoint to diagnose configuration.
+
+The companion integration is supplied as reusable NestJS/TypeScript examples:
+\`docs/anime-ai-companion-integration.ts\`,
+\`docs/anime-ai-companion-stream.controller.ts\`, and
+\`frontend/src/companion-bridge.ts\`. The bridge uses an AnalyserNode to map
+real playback RMS to Live2D lip sync and preserves speech/action ordering.
+
+**Installation/benchmarks disclaimer:** Real CUDA model inference has not
+been executed in CI; tests mock SGLang. Streaming requires a separate
+operational model server. No large model weights are committed to GitHub.
 
 ### Security / future production hardening
 
-Designed for localhost, single user. The Vite `VITE_API_KEY` is visible to browser clients: **do not expose this frontend publicly with production credentials**. Use a reverse proxy/BFF, user auth, quotas, rate limits, per-user ownership and object storage if deploying online. Voice files are private authenticated routes. The system currently uses one local SQLite DB and one in-process queue (jobs queued at process crash may remain pending; use a persistent job broker for production).
+Designed for localhost, single user. The Vite `VITE_API_KEY` is visible to browser clients: **do not expose this frontend publicly with production credentials**. Use a reverse proxy/BFF, user auth, quotas, rate limits, per-user ownership and object storage if deploying online. Voice files are private authenticated routes. The system currently uses one local SQLite DB and one in-process queue. On restart, abandoned queued/running jobs are marked failed; use a durable broker for production. The optional PCM streaming gateway is limited to one request at a time per worker. See `docs/ROADMAP.md` for remaining multi-tenant security and infrastructure work.
 
 ### Quality notes
 
