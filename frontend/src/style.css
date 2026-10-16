@@ -14,3 +14,13 @@
 @media(max-width:950px){.sidebar{position:fixed;left:0;transform:translateX(-110%);transition:transform .2s}.sidebar.shown{transform:translateX(0)}.mobile-scrim{position:fixed;inset:0;background:#050713bc;z-index:7}.mobile-toggle{display:flex}.studio-grid{grid-template-columns:minmax(0,1fr) minmax(260px,.8fr)}}
 @media(max-width:730px){.topbar{height:64px;padding:0 14px}.content{padding:25px 15px}.model-badge{display:none}.page-header{align-items:flex-start;flex-direction:column}.page-header h1{font-size:29px}.stat-grid{gap:9px}.stat-card{padding:15px 12px;gap:10px;min-height:108px}.stat-icon{height:33px;width:33px;border-radius:9px}.stat-icon svg{width:17px}.stat-card strong{font-size:21px}.stat-card strong.small-stat{font-size:17px}.stat-card small{font-size:9px}.stat-card span{font-size:9px}.studio-grid{grid-template-columns:1fr}.page-footer{flex-direction:column;align-items:center}.action-row{justify-content:flex-end}.results-panel{padding:17px}.voice-item,.job-item{gap:8px;padding:10px}.job-icon{display:none}.job-info strong{max-width:140px}.model-head{flex-wrap:wrap}.model-head .status-tag{margin-left:auto}}
 @media(max-width:420px){.stat-grid{grid-template-columns:1fr 1fr}.stat-grid .stat-card:last-child{grid-column:span 2}.stat-card{min-height:90px}.panel-heading{flex-direction:column}.header-actions{width:100%}.header-actions .button{flex:1}.audio-result{flex-wrap:wrap}.audio-info{min-width:140px}.audio-result .button{flex:1}.breadcrumbs{gap:7px}.modal{padding:20px}.model-stats{grid-template-columns:1fr}}
+
+
+/* Phase 3: progressive streaming controls (keeps existing responsive layout) */
+.stream-params { margin: 16px 0; display: grid; gap: 8px; }
+.stream-params label { color: var(--muted, #9fa8be); font-size: 12px; font-weight: 600; }
+.stream-params input { background: rgba(13,18,34,.7); border: 1px solid rgba(171,181,224,.2);
+  border-radius: 10px; color: inherit; padding: 12px 14px; width: 100%; box-sizing: border-box; }
+.stream-params span { font-size: 12px; color: #a9bcd4; }
+.stream-actions { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.stream-progress { color: #a9bcd4; font-size: 12px; }
