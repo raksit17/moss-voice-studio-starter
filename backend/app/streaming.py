@@ -7,6 +7,7 @@ import base64
 import logging
 import threading
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from fastapi import HTTPException
@@ -22,7 +23,7 @@ stream_slots = threading.BoundedSemaphore(1)
 
 class StreamBody(BaseModel):
     text: str = Field(min_length=1, max_length=600)
-    language: str = 'Thai'
+    language: Literal['Thai', 'English'] = 'Thai'
     voice_id: str | None = None
     instructions: str | None = Field(default=None, max_length=240)
 
