@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     api_key: str = 'local-dev-key'
     allowed_origins: str = 'http://localhost:5173,http://127.0.0.1:5173'
     data_dir: Path = Path('./data')
+    models_dir: Path = Path('./models')
     moss_model_id: str = 'OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5'
     moss_device: str = 'auto'
     moss_max_new_tokens: int = 4096
