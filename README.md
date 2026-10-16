@@ -1,0 +1,139 @@
+# MOSS Voice Studio — Local Thai/English TTS Playground
+
+A standalone **Voice Library + TTS Playground + REST API** using **MOSS-TTS-Local-Transformer-v1.5**. Built for experimenting with cloned voices and integrating with apps such as anime-ai-companion. The model weights are **not bundled**.
+
+## Features
+
+- Vue 3 + Vite + TypeScript modern dark frontend, Thai UI
+- FastAPI Python backend, SQLite history, voice reference file library
+- **Real** official MOSS Transformers inference adapter (no fabricated audio/demo synthesizer)
+- Upload authorized **PCM WAV** reference voice and reuse by `voice_id`
+- Synthesize Thai/English, with or without a reference clip
+- Queue up to 8 jobs, run one at a time on the GPU, poll jobs, play/download resulting WAV
+- API-key authentication for local use; documented client integration
+- Model is lazily loaded on the first generation (downloaded on first use unless local path configured)
+
+## Requirements / caveats
+
+**Recommended:** NVIDIA GPU with sufficient VRAM for the ~5B checkpoint **and** 48 kHz stereo tokenizer, Python **3.12**, Node **20+**. CPU-only is technically possible but impractical for interactive speech. This scaffold has not been tested with the multi-GB model weights in this environment.
+
+The official code uses `trust_remote_code=True`; pin a trusted model revision and review upstream code before deploying. The model license is **Apache-2.0**; obtain consent for each voice, respect copyrighted samples, and review dependencies and deployment obligations.
+
+### Backend (Windows PowerShell)
+
+```powershell
+cd backend
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+Copy-Item .env.example .env
+pip install -r requirements.txt
+```
+
+**Recommended (tested upstream dependency stack):** install official MOSS dependencies from the upstream repository. This is a large download and requires a GPU driver compatible with CUDA 12.8; verify your driver first.
+
+```powershell
+git clone https://github.com/OpenMOSS/MOSS-TTS.git third_party/MOSS-TTS
+pip install --extra-index-url https://download.pytorch.org/whl/cu128 -e "third_party/MOSS-TTS[torch-runtime]"
+pip install -r requirements-moss.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+```
+
+If your GPU/driver needs a different CUDA runtime, use the appropriate PyTorch install command instead of the upstream `torch-runtime` extra; keep torch/torchaudio/torchcodec version compatibility. See https://github.com/OpenMOSS/MOSS-TTS .
+
+**Downloading weights once (optional, recommended for offline use):**
+
+```powershell
+pip install -U huggingface_hub
+hf download OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5 --local-dir models/moss-tts-local-v1.5
+hf download OpenMOSS-Team/MOSS-Audio-Tokenizer-v2 --local-dir models/moss-audio-tokenizer-v2
+```
+
+**IMPORTANT:** The processor config from the main model points to the online tokenizer ID `OpenMOSS-Team/MOSS-Audio-Tokenizer-v2`, so `models/moss-audio-tokenizer-v2` is *not automatically loaded* in the basic adapter. With network access it downloads/caches the tokenizer on first use. For fully offline use: mirror both into the HF cache under their repo IDs, or adapt the trusted processor config in a local copy to point to the local tokenizer directory. Do not assume downloading the model folder alone makes inference offline.
+
+For a model downloaded under `backend/models/...`, update `.env`:
+
+```dotenv
+MOSS_MODEL_ID=./models/moss-tts-local-v1.5
+```
+
+`GET /v1/health` will say `not_loaded` until a synthesis starts; this is **expected**. First generation may take a while to load. Runtime CUDA capability, dependencies and model weights are required for real synthesis.
+
+### Frontend
+
+```powershell
+cd frontend
+Copy-Item .env.example .env
+npm install
+npm run dev
+```
+
+Open http://127.0.0.1:5173.
+
+The UI can render when the API is offline, but buttons that require inference or storage will report errors rather than playing fake generated audio.
+
+### Backend API
+
+All endpoints expect `X-API-Key: local-dev-key` in the default local configuration. Adjust `.env` for your environment.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/v1/health` | Connection, engine, model status |
+| GET | `/v1/voices` | List voice profiles |
+| POST | `/v1/voices` | Multipart: `name`, `language`, `consent=true`, `audio` (PCM WAV) |
+| GET | `/v1/voices/{id}/audio` | Listen to reference |
+| DELETE | `/v1/voices/{id}` | Remove reference profile |
+| POST | `/v1/jobs` | Generate WAV in background |
+| GET | `/v1/jobs` | Recent jobs |
+| GET | `/v1/jobs/{id}` | Poll a job |
+| GET | `/v1/jobs/{id}/audio` | Download generated WAV |
+
+Example call:
+
+```powershell
+$headers = @{"X-API-Key"="local-dev-key"}
+$body = @{ text="สวัสดีค่ะ วันนี้เป็นอย่างไรบ้างคะ"; language="Thai"; voice_id=$null } | ConvertTo-Json
+Invoke-RestMethod -Uri 'http://127.0.0.1:8001/v1/jobs' -Method Post -Headers $headers -ContentType 'application/json' -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+```
+
+The POST returns job ID / status URL, not the audio itself. Poll the status endpoint until completed, then GET the `.wav` audio endpoint. Clone mode uses the saved `voice_id` reference clip. This is **zero-shot voice cloning**, not training new weights.
+
+### Integrating with anime-ai-companion
+
+Keep the model in **this service only**, not the companion project. A server-side NestJS example is included at `docs/anime-ai-companion-integration.ts`. Your companion backend sends LLM `speech` segments to `POST /v1/jobs` with the chosen voice ID, polls `GET /v1/jobs/{id}`, then downloads the authenticated WAV. Feed it to your web audio player and existing Live2D RMS lip-sync. Do not send LLM `action`/stage directions to TTS. API keys stay on the companion backend.
+
+For *low-latency realtime streaming*, a second-phase integration can use the upstream MOSS streaming runtime or SGLang-Omni. **This MVP uses queued full-WAV generation; it is not streaming.**
+
+### Security / future production hardening
+
+Designed for localhost, single user. The Vite `VITE_API_KEY` is visible to browser clients: **do not expose this frontend publicly with production credentials**. Use a reverse proxy/BFF, user auth, quotas, rate limits, per-user ownership and object storage if deploying online. Voice files are private authenticated routes. The system currently uses one local SQLite DB and one in-process queue (jobs queued at process crash may remain pending; use a persistent job broker for production).
+
+### Quality notes
+
+- 48 kHz stereo is the codec format; it is **not** a guarantee of pronunciation accuracy.
+- Voice cloning depends on input quality. Use clean, authorized 3–20 second WAV samples.
+- Thai/English language tags are passed explicitly.
+- Test Thai tones, numbers, code-switching and speaker similarity before any commercial release.
+
+## Project layout
+
+```text
+moss-voice-studio/
+├─ backend/
+│  ├─ app/
+│  │  ├─ config.py        environment configuration
+│  │  ├─ db.py            SQLite metadata/history
+│  │  ├─ engine.py        official HF MOSS inference adapter
+│  │  └─ main.py          voice upload / jobs / audio REST endpoints
+│  ├─ tests/
+│  ├─ requirements.txt
+│  ├─ requirements-moss.txt
+│  └─ .env.example
+├─ frontend/
+│  ├─ src/
+│  │  ├─ api.ts           typed HTTP client
+│  │  ├─ App.vue          UI & interactions
+│  │  ├─ style.css        responsive dark theme
+│  │  └─ main.ts
+│  └─ package.json
+└─ README.md
+```
