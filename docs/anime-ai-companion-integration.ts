@@ -29,6 +29,28 @@ export class VoiceStudioClient {
     return result;
   }
 
+  /**
+   * Phase 3: progressive raw PCM (48 kHz, mono, s16le).
+   * Return the Response *without consuming it* so NestJS can pipe the body.
+   */
+  async synthesizeStream(
+    text: string,
+    voiceId: string | null,
+    language: 'Thai' | 'English',
+    signal?: AbortSignal,
+    instructions?: string,
+  ): Promise<Response> {
+    const result = await this.call('/v1/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice_id: voiceId, language, instructions }),
+      signal,
+    });
+    if (result.headers.get('X-Audio-Encoding') !== 'pcm_s16le' || !result.body)
+      throw new Error('Voice Studio returned an unsupported audio format');
+    return result;
+  }
+
   async synthesize(text: string, voiceId: string | null, language: 'Thai' | 'English'): Promise<Buffer> {
     const started = await this.call('/v1/jobs', {
       method: 'POST',
@@ -57,4 +79,4 @@ export class VoiceStudioClient {
 // - return WAV bytes from a NestJS controller with Content-Type: audio/wav
 // - use decoded WebAudio RMS to drive Live2D ParamA (lip-sync) during playback
 // - for { type: 'action' }, trigger Live2D expression/motion ONLY, not TTS
-// NOTE: The v0.1 API is non-streaming; do not present this as low-latency streaming.
+// Streaming mode requires a separately running SGLang-Omni server; WAV jobs do not.
