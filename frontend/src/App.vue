@@ -48,6 +48,7 @@ const notification = ref('')
 const error = ref('')
 const creating = ref(false)
 const activeJobId = ref<string | null>(null)
+const clockNow = ref(Date.now())
 const playerUrl = ref<string | null>(null)
 const player = ref<HTMLAudioElement | null>(null)
 const playing = ref(false)
@@ -67,6 +68,7 @@ let liveContext: AudioContext | null = null
 const uploading = ref(false)
 const pickedFileInput = ref<HTMLInputElement | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
+let clockTicker: ReturnType<typeof setInterval> | null = null
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 const examples = [
   { name: 'อบอุ่น', text: 'กลับมาแล้วเหรอคะ... ฉันกำลังรอคุณอยู่พอดีเลย วันนี้มีอะไรอยากเล่าให้ฟังไหมคะ?' },
@@ -88,6 +90,42 @@ const packageSources = computed(() => builderType.value === 'voice'
 const latestJobs = computed(() => jobs.value.slice(0, 5))
 const historyJobs = computed(() => jobs.value)
 const dateLabel = (str: string) => new Date(str).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })
+// The live clock is client-side; completed duration is measured by the backend worker.
+function jobSeconds(job: Job): number | null {
+  if (job.status === 'queued') {
+    const queuedAt = Date.parse(job.created_at)
+    return Number.isFinite(queuedAt) ? Math.max(0, Math.floor((clockNow.value - queuedAt) / 1000)) : null
+  }
+  if (job.status === 'running') {
+    const runningAt = Date.parse(job.started_at || job.created_at)
+    return Number.isFinite(runningAt) ? Math.max(0, Math.floor((clockNow.value - runningAt) / 1000)) : null
+  }
+  if (typeof job.duration_seconds === 'number' && Number.isFinite(job.duration_seconds)) {
+    return Math.max(0, Math.round(job.duration_seconds))
+  }
+  if (job.started_at && job.finished_at) {
+    const difference = Date.parse(job.finished_at) - Date.parse(job.started_at)
+    return Number.isFinite(difference) ? Math.max(0, Math.round(difference / 1000)) : null
+  }
+  return null // Legacy jobs without a measured duration must not display an invented timing.
+}
+function displayDuration(seconds: number | null): string {
+  if (seconds === null) return '—'
+  const total = Math.floor(seconds)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const minutes = Math.floor(total / 60)
+  return minutes >= 60
+    ? `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}:${pad(total % 60)}`
+    : `${pad(minutes)}:${pad(total % 60)}`
+}
+function jobTimeTitle(job: Job): string {
+  if (job.status === 'queued') return 'เวลาที่รอในคิว'
+  if (job.status === 'running') return job.started_at ? 'เวลาที่ใช้สร้างเสียง' : 'เวลาตั้งแต่ส่งงาน'
+  return job.status === 'completed' ? 'เวลาสร้างเสียงทั้งหมด' : 'เวลาก่อนเกิดข้อผิดพลาด'
+}
+function audioFilename(job: Job): string {
+  return `voice-${job.id.slice(0, 8)}.wav`
+}
 
 function alertMessage(message: string, type: 'notice' | 'error' = 'notice') {
   if (toastTimer) clearTimeout(toastTimer)
@@ -202,8 +240,14 @@ async function downloadAudio(path: string | null, filename: string) {
   try {
     const url = await getAudio(path)
     const a = document.createElement('a')
-    a.href = url; a.download = filename; a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    a.href = url
+    a.download = filename
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    alertMessage('เริ่มดาวน์โหลด ' + filename + ' แล้ว · ตรวจสอบรายการดาวน์โหลดของเบราว์เซอร์')
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
   } catch (e) { alertMessage((e as Error).message, 'error') }
 }
 async function uploadVoice() {
@@ -274,10 +318,12 @@ function stopLive() {
 onMounted(async () => {
   await refresh()
   timer = setInterval(() => void refresh(), 3500)
+  clockTicker = setInterval(() => { clockNow.value = Date.now() }, 1000)
 })
 onUnmounted(() => {
   stopLive()
   if (timer) clearInterval(timer)
+  if (clockTicker) clearInterval(clockTicker)
   if (toastTimer) clearTimeout(toastTimer)
   if (playerUrl.value) URL.revokeObjectURL(playerUrl.value)
 })
@@ -376,18 +422,63 @@ onUnmounted(() => {
             </section>
           </div>
 
-          <section class="panel results-panel"><div class="results-heading"><div><div class="panel-kicker">03 / OUTPUT</div><h2><Volume2 :size="20" class="heading-icon"/> Audio Preview</h2></div><span v-if="currentJob" class="status-tag" :class="currentJob.status">{{ currentJob.status }}</span><span v-else class="waiting-tag">Waiting for generation</span></div>
-            <template v-if="currentJob && currentJob.status === 'completed'"><div class="audio-result"><div class="audio-result-icon"><FileAudio :size="22"/></div><div class="audio-info"><strong>Generated speech</strong><span>{{ currentJob.language }} · WAV · {{ dateLabel(currentJob.created_at) }}</span></div><button class="button ghost" @click="playAudio(currentJob.audio_url)"><Play :size="15"/> Play</button><button class="button secondary" @click="downloadAudio(currentJob.audio_url,`moss-${currentJob.id}.wav`)"><ArrowDownToLine :size="16"/> Download</button></div></template>
-            <template v-else-if="currentJob && currentJob.status === 'failed'"><div class="empty-result failed-result"><Info :size="28"/><strong>Generation failed</strong><span>{{ currentJob.error }}</span></div></template>
-            <template v-else-if="currentJob"><div class="empty-result"><div class="pulse-wave"><span></span><span></span><span></span><span></span><span></span></div><strong>กำลังสร้างเสียง</strong><span>รันโมเดลบนเครื่องและประมวลผลเสียง กรุณาดูสถานะในแถบนี้</span></div></template>
-            <template v-else><div class="empty-result"><div class="empty-wave"><AudioLines :size="30"/></div><strong>Your voice is waiting to be created</strong><span>เลือกเสียง พิมพ์ข้อความ แล้วกด Generate Speech เพื่อเริ่มต้น</span></div></template>
+          <section class="panel results-panel">
+            <div class="results-heading">
+              <div><div class="panel-kicker">03 / OUTPUT</div><h2><Volume2 :size="20" class="heading-icon"/> Audio Preview & Download</h2></div>
+              <span v-if="currentJob" class="status-tag" :class="currentJob.status">{{ currentJob.status }}</span>
+              <span v-else class="waiting-tag">Waiting for generation</span>
+            </div>
+            <div v-if="currentJob" class="generation-timer" role="timer" aria-label="Generation elapsed time">
+              <div class="generation-timer-caption">
+                <Clock3 :size="19"/>
+                <div>
+                  <strong>{{ jobTimeTitle(currentJob) }}</strong>
+                  <span>{{ currentJob.status === 'queued' ? 'ยังไม่เริ่มประมวลผล' : currentJob.status === 'running' ? 'จับเวลาจริงขณะประมวลผล · อัปเดตทุกวินาที' : 'เวลาประมวลผลจาก Backend · ไม่รวมเวลารอในคิว' }}</span>
+                </div>
+              </div>
+              <strong class="generation-clock">{{ displayDuration(jobSeconds(currentJob)) }}</strong>
+              <span class="generation-clock-unit">นาที:วินาที</span>
+            </div>
+            <template v-if="currentJob && currentJob.status === 'completed'">
+              <div class="audio-result">
+                <div class="audio-result-icon"><FileAudio :size="22"/></div>
+                <div class="audio-info">
+                  <strong>สร้างเสียงสำเร็จ</strong>
+                  <span>{{ currentJob.language }} · WAV · {{ dateLabel(currentJob.created_at) }}</span>
+                </div>
+                <button class="button ghost" @click="playAudio(currentJob.audio_url)"><Play :size="15"/> ฟังเสียง</button>
+              </div>
+              <div class="download-panel">
+                <div class="download-panel-label"><ArrowDownToLine :size="20"/><strong>ดาวน์โหลดไฟล์เสียง</strong></div>
+                <div class="download-panel-meta">
+                  <strong>{{ audioFilename(currentJob) }}</strong>
+                  <span>WAV · บันทึกลงตำแหน่งดาวน์โหลดที่ตั้งค่าไว้ในเบราว์เซอร์ (โดยทั่วไปคือ Downloads)</span>
+                </div>
+                <button class="button primary" :disabled="!currentJob.audio_url" @click="downloadAudio(currentJob.audio_url, audioFilename(currentJob))">
+                  <ArrowDownToLine :size="18"/> ดาวน์โหลด WAV
+                </button>
+              </div>
+            </template>
+            <template v-else-if="currentJob && currentJob.status === 'failed'">
+              <div class="empty-result failed-result"><Info :size="28"/><strong>Generation failed</strong><span>{{ currentJob.error }}</span></div>
+            </template>
+            <template v-else-if="currentJob">
+              <div class="empty-result">
+                <div class="pulse-wave"><span></span><span></span><span></span><span></span><span></span></div>
+                <strong>{{ currentJob.status === 'queued' ? 'รอคิวสร้างเสียง' : 'กำลังสร้างเสียง' }}</strong>
+                <span>ระบบกำลังประมวลผล · เมื่อสำเร็จจะมีปุ่มดาวน์โหลด WAV แสดงด้านล่าง</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="empty-result"><div class="empty-wave"><AudioLines :size="30"/></div><strong>Your voice is waiting to be created</strong><span>เลือกเสียง พิมพ์ข้อความ แล้วกด Generate Speech เพื่อเริ่มต้น</span></div>
+            </template>
             <audio v-if="playerUrl" ref="player" :src="playerUrl" controls class="html-player" @play="playing=true" @pause="playing=false" @ended="playing=false"></audio>
           </section>
         </template>
 
         <template v-if="page === 'voices'"><div class="page-header"><div><div class="eyebrow"><Library :size="14"/> YOUR LIBRARY</div><h1>Voice <em>Library.</em></h1><p>จัดการเสียงต้นแบบสำหรับ Zero-shot Voice Cloning และใช้ Voice ID กับแอปอื่น</p></div><button class="button primary" @click="uploadOpen = true"><Plus :size="17"/> Add a voice</button></div><div class="panel library-panel"><div class="results-heading"><div><h2><Mic2 :size="20" class="heading-icon"/> Saved profiles</h2><p>{{ voices.length }} voices available</p></div></div><div v-if="voices.length" class="voice-list"><div v-for="voice in voices" :key="voice.id" class="voice-item"><div class="voice-item-icon"><AudioLines :size="21"/></div><div class="voice-item-info"><strong>{{ voice.name }}<small v-if="voice.character" class="character-tag">{{ voice.character }}</small></strong><span>{{ voice.language }} · {{ dateLabel(voice.created_at) }} · {{ voice.id.slice(0,8) }}</span></div><div class="voice-item-actions"><button class="small-button" @click="selectedVoice=voice.id; navigate('studio')"><WandSparkles :size="15"/> Use voice</button><button class="icon-button danger-icon" title="Delete voice" @click="removeVoice(voice)"><Trash2 :size="17"/></button></div></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Mic2 :size="29"/></div><strong>No voices saved yet</strong><span>เพิ่มไฟล์เสียง WAV ที่มีสิทธิ์ใช้งาน เพื่อโคลนเสียงของตัวละคร</span><button class="button secondary" @click="uploadOpen=true"><UploadCloud :size="16"/> Upload reference</button></div></div></template>
 
-        <template v-if="page === 'history'"><div class="page-header"><div><div class="eyebrow"><Clock3 :size="14"/> AUDIO OUTPUTS</div><h1>Generation <em>History.</em></h1><p>ตรวจสถานะงานย้อนหลัง เล่น และดาวน์โหลดไฟล์เสียงที่สร้างไว้</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Refresh</button></div><div class="panel library-panel"><div class="results-heading"><h2><Headphones :size="20" class="heading-icon"/> Recent jobs</h2><span class="waiting-tag">{{ historyJobs.length }} records</span></div><div v-if="historyJobs.length" class="job-list"><div v-for="job in historyJobs" :key="job.id" class="job-item"><div class="job-icon"><FileAudio :size="20"/></div><div class="job-info"><strong>{{ job.text }}</strong><span>{{ job.language }} · {{ dateLabel(job.created_at) }}</span><small v-if="job.error" class="error-text">{{ job.error }}</small></div><span class="status-tag" :class="job.status">{{ job.status }}</span><button class="icon-button" :disabled="job.status !== 'completed'" @click="playAudio(job.audio_url)" title="Play"><Play :size="16"/></button><button class="icon-button" :disabled="job.status !== 'completed'" @click="downloadAudio(job.audio_url, `moss-${job.id}.wav`)" title="Download"><ArrowDownToLine :size="16"/></button></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Clock3 :size="29"/></div><strong>No generations yet</strong><span>สร้างเสียงจากหน้า Playground แล้วผลลัพธ์จะอยู่ที่นี่</span><button class="button secondary" @click="navigate('studio')">Open Playground</button></div></div></template>
+        <template v-if="page === 'history'"><div class="page-header"><div><div class="eyebrow"><Clock3 :size="14"/> AUDIO OUTPUTS</div><h1>Generation <em>History.</em></h1><p>ตรวจสถานะงานย้อนหลัง เล่น และดาวน์โหลดไฟล์เสียงที่สร้างไว้</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Refresh</button></div><div class="panel library-panel"><div class="results-heading"><h2><Headphones :size="20" class="heading-icon"/> Recent jobs</h2><span class="waiting-tag">{{ historyJobs.length }} records</span></div><div v-if="historyJobs.length" class="job-list"><div v-for="job in historyJobs" :key="job.id" class="job-item"><div class="job-icon"><FileAudio :size="20"/></div><div class="job-info"><strong>{{ job.text }}</strong><span>{{ job.language }} · {{ dateLabel(job.created_at) }} · {{ jobTimeTitle(job) }}: {{ displayDuration(jobSeconds(job)) }}</span><small v-if="job.error" class="error-text">{{ job.error }}</small></div><span class="status-tag" :class="job.status">{{ job.status }}</span><button class="icon-button" :disabled="job.status !== 'completed'" @click="playAudio(job.audio_url)" title="Play"><Play :size="16"/></button><button class="button secondary history-download" :disabled="job.status !== 'completed'" @click="downloadAudio(job.audio_url, audioFilename(job))" title="Download WAV"><ArrowDownToLine :size="16"/> WAV</button></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Clock3 :size="29"/></div><strong>No generations yet</strong><span>สร้างเสียงจากหน้า Playground แล้วผลลัพธ์จะอยู่ที่นี่</span><button class="button secondary" @click="navigate('studio')">Open Playground</button></div></div></template>
 
         <template v-if="page === 'model'">
           <section class="panel details-panel" style="margin-bottom:18px">

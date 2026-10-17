@@ -3,6 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 import logging
 import threading
+import time
 import wave
 import json
 
@@ -57,6 +58,8 @@ def public_job(row: dict) -> dict:
         'id': row['id'], 'voice_id': row['voice_id'], 'model_id': row.get('model_id'), 'voice_model_id': row.get('voice_model_id'), 'text': row['text'],
         'language': row['language'], 'status': row['status'], 'error': row['error'],
         'created_at': row['created_at'], 'updated_at': row['updated_at'],
+        'started_at': row.get('started_at'), 'finished_at': row.get('finished_at'),
+        'duration_seconds': row.get('duration_seconds'),
         'audio_url': f"/v1/jobs/{row['id']}/audio" if row['status'] == 'completed' else None,
         'settings': json.loads(row.get('settings_json') or '{}'),
     }
@@ -145,20 +148,28 @@ def delete_voice(voice_id: str):
 
 def _process_job(job_id: str, text: str, language: str, reference: Path | None, generation: dict, selected_model: dict | None, voice_package: dict | None = None) -> None:
     output = settings.data_dir / 'generations' / f'{job_id}.wav'
+    started_clock = None
     try:
-        execute('UPDATE jobs SET status=?, updated_at=? WHERE id=?', ('running', now_iso(), job_id))
+        started_at = now_iso()
+        started_clock = time.perf_counter()
+        execute('UPDATE jobs SET status=?, started_at=?, updated_at=? WHERE id=?',
+                ('running', started_at, started_at, job_id))
         if voice_package is not None:
             # One executor queues MOSS and F5 jobs; release MOSS GPU memory first.
             engine.unload()
             synthesize_f5(text, voice_package, output)
         else:
             engine.synthesize(text, language, reference, output, generation, selected_model)
-        execute('UPDATE jobs SET status=?, output_path=?, updated_at=? WHERE id=?',
-                ('completed', str(output.resolve()), now_iso(), job_id))
+        finished_at = now_iso()
+        duration = round(time.perf_counter() - started_clock, 2)
+        execute('UPDATE jobs SET status=?, output_path=?, updated_at=?, finished_at=?, duration_seconds=? WHERE id=?',
+                ('completed', str(output.resolve()), finished_at, finished_at, duration, job_id))
     except Exception as exc:
         logger.exception('Generation failed for %s', job_id)
-        execute('UPDATE jobs SET status=?, error=?, updated_at=? WHERE id=?',
-                ('failed', str(exc)[:500], now_iso(), job_id))
+        finished_at = now_iso()
+        duration = round(time.perf_counter() - started_clock, 2) if started_clock is not None else None
+        execute('UPDATE jobs SET status=?, error=?, updated_at=?, finished_at=?, duration_seconds=? WHERE id=?',
+                ('failed', str(exc)[:500], finished_at, finished_at, duration, job_id))
         output.unlink(missing_ok=True)
     finally:
         slots.release()

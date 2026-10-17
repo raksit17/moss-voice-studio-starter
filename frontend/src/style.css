@@ -33,3 +33,20 @@
 .voice-item-info .wrap-text{overflow-wrap:anywhere}
 .modal-input:disabled,.voice-selection select:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:730px){.voice-item-actions{justify-content:flex-end}.voice-item{flex-wrap:wrap}}
+
+/* Generation timing and clearly labeled WAV downloads */
+.generation-timer{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:14px 0 20px;padding:17px 20px;border:1px solid #4c416f;border-radius:12px;background:#201c36}
+.generation-timer-caption{display:flex;align-items:center;gap:10px;flex:1;min-width:190px;color:#bea8ff}
+.generation-timer-caption>div{display:flex;flex-direction:column;gap:6px}
+.generation-timer-caption strong{font-size:13px;color:#e4d8ff}
+.generation-timer-caption span{font-size:11px;color:#aba0c6;line-height:1.5}
+.generation-clock{font-variant-numeric:tabular-nums;font-size:29px;letter-spacing:1px;color:#f2eaff;white-space:nowrap}
+.generation-clock-unit{font-size:11px;color:#a99cc4;white-space:nowrap}
+.download-panel{display:flex;align-items:center;flex-wrap:wrap;gap:18px;margin-top:14px;padding:18px 20px;background:#142c2b;border:1px solid #376c64;border-radius:12px}
+.download-panel-label{display:flex;align-items:center;gap:9px;color:#9bf1d7;font-size:13px}
+.download-panel-meta{display:flex;flex:1;min-width:190px;flex-direction:column;gap:6px}
+.download-panel-meta strong{color:#e1fff5;font-size:13px;overflow-wrap:anywhere}
+.download-panel-meta span{color:#a4c8c1;font-size:11px;line-height:1.7}
+.download-panel>.button{margin-left:auto}
+.history-download{white-space:nowrap;font-size:11px;padding:8px 10px}
+@media(max-width:730px){.download-panel>.button{width:100%;justify-content:center}.generation-clock{font-size:24px}}

@@ -19,6 +19,9 @@ export interface Job {
   audio_url: string | null
   created_at: string
   updated_at: string
+  started_at?: string | null
+  finished_at?: string | null
+  duration_seconds?: number | null
 }
 
 export interface Health {

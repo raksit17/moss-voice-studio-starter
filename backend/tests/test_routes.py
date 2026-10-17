@@ -76,6 +76,12 @@ def test_generation_lifecycle(monkeypatch):
     assert wav_response.status_code == 200
     assert wav_response.content.startswith(b'RIFF')
     assert job['settings'] == {'temperature': 1.7, 'top_p': 0.8, 'top_k': 25}
+    assert job['started_at'] is not None
+    assert job['finished_at'] is not None
+    assert job['duration_seconds'] is not None and job['duration_seconds'] >= 0
+    assert job['created_at'] <= job['started_at'] <= job['finished_at']
+    listed = client.get('/v1/jobs', headers=HEADERS).json()['items']
+    assert next(item for item in listed if item['id'] == job_id)['duration_seconds'] is not None
 
 def test_model_registry_and_activation():
     res = client.get('/v1/models', headers=HEADERS)

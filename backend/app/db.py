@@ -77,6 +77,13 @@ def initialize() -> None:
             con.execute('ALTER TABLE jobs ADD COLUMN model_id TEXT')
         if 'voice_model_id' not in job_fields:
             con.execute('ALTER TABLE jobs ADD COLUMN voice_model_id TEXT')
+        # Keep actual processing timestamps separate from queue/creation time.
+        if 'started_at' not in job_fields:
+            con.execute('ALTER TABLE jobs ADD COLUMN started_at TEXT')
+        if 'finished_at' not in job_fields:
+            con.execute('ALTER TABLE jobs ADD COLUMN finished_at TEXT')
+        if 'duration_seconds' not in job_fields:
+            con.execute('ALTER TABLE jobs ADD COLUMN duration_seconds REAL')
         con.execute("UPDATE jobs SET status='failed', error='Server restarted before completion', updated_at=? WHERE status IN ('queued','running')", (now_iso(),))
 
 
