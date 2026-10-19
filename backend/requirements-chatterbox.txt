@@ -1,0 +1,4 @@
+# Install in a dedicated Python 3.11 venv to avoid MOSS/F5 dependency conflicts.
+# Chatterbox installs its own pinned Torch/torchaudio stack.
+chatterbox-tts
+soundfile>=0.12
