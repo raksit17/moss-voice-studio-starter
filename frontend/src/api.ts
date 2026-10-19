@@ -11,6 +11,7 @@ export interface Job {
   id: string
   voice_id: string | null
   model_id?: string | null
+  engine?: 'moss' | 'f5-tts-th' | 'chatterbox-turbo'
   voice_model_id?: string | null
   text: string
   language: string
@@ -62,11 +63,11 @@ export const getStreamStatus = () => request<StreamStatus>('/v1/stream/status')
 export const getVoices = async () => (await request<{ items: Voice[] }>('/v1/voices')).items
 export const getJobs = async () => (await request<{ items: Job[] }>('/v1/jobs')).items
 export interface GenerationSettings { temperature: number; top_p: number; top_k: number }
-export const createJob = (text: string, language: string, voiceId: string | null, settings: GenerationSettings, modelId?: string | null, voiceModelId?: string | null) =>
+export const createJob = (text: string, language: string, voiceId: string | null, settings: GenerationSettings, modelId?: string | null, voiceModelId?: string | null, engine: 'moss' | 'chatterbox-turbo' = 'moss') =>
   request<{ id: string; status: string }>('/v1/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, language, voice_id: voiceId, model_id: modelId || null, voice_model_id: voiceModelId || null, ...settings }),
+    body: JSON.stringify({ text, language, voice_id: voiceId, model_id: modelId || null, voice_model_id: voiceModelId || null, engine, ...settings }),
   })
 export const deleteVoice = (id: string) => request<{ deleted: boolean }>(`/v1/voices/${id}`, { method: 'DELETE' })
 export const createVoice = (name: string, language: string, file: File, transcript = '', character = '') => {
@@ -156,3 +157,18 @@ export const buildVoicePackage = (name: string, sourceType: 'voice' | 'generatio
   })
 export const deleteVoicePackage = (id: string) =>
   request<{ deleted: boolean }>(`/v1/voice-models/${id}`, { method: 'DELETE' })
+
+/** A separately installed, resident English-only Chatterbox-Turbo runtime. */
+export interface ChatterboxStatus {
+  engine: 'chatterbox-turbo'
+  state: 'not_loaded' | 'loading' | 'ready' | 'error'
+  ready: boolean
+  python_found: boolean
+  device: string
+  error: string | null
+  pid: number | null
+  log_path: string
+}
+export const getChatterboxStatus = () => request<ChatterboxStatus>('/v1/chatterbox/status')
+export const loadChatterbox = () => request<ChatterboxStatus>('/v1/chatterbox/load', { method: 'POST' })
+export const unloadChatterbox = () => request<ChatterboxStatus>('/v1/chatterbox/unload', { method: 'POST' })
