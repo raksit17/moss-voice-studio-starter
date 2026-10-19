@@ -35,20 +35,21 @@ class ChatterboxRuntime:
         return path.resolve()
 
     def status(self):
-        with self._lock:
-            alive = self._process is not None and self._process.poll() is None
-            if self._process is not None and not alive:
-                self._close_locked()
-                self.state = "error"
-                self.last_error = self.last_error or "Chatterbox worker exited unexpectedly; check logs"
-            return {
-                "engine": "chatterbox-turbo", "state": self.state,
-                "ready": alive and self.state == "ready",
-                "python_found": self._python().is_file(),
-                "device": self.device, "error": self.last_error,
-                "pid": self._process.pid if alive else None,
-                "log_path": str((settings.data_dir / "logs" / "chatterbox.log").resolve()),
-            }
+        # Do not acquire the inference lock: UI polls while a long job is running.
+        proc = self._process
+        alive = proc is not None and proc.poll() is None
+        state = self.state if alive or proc is None else "error"
+        error = self.last_error
+        if proc is not None and not alive and not error:
+            error = "Chatterbox worker exited unexpectedly; check logs"
+        return {
+            "engine": "chatterbox-turbo", "state": state,
+            "ready": alive and state == "ready",
+            "python_found": self._python().is_file(),
+            "device": self.device, "error": error,
+            "pid": proc.pid if alive else None,
+            "log_path": str((settings.data_dir / "logs" / "chatterbox.log").resolve()),
+        }
 
     def _close_locked(self):
         if self._process is not None:
