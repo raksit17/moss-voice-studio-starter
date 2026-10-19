@@ -33,20 +33,58 @@ def _patch_wav_loader():
     torchaudio.load = load
 
 
+
 def _load():
     global _model, _device
+
     if _model is None:
         import torch
+        import numpy as np
         from chatterbox.tts_turbo import ChatterboxTurboTTS
-        selected = os.getenv("CHATTERBOX_DEVICE", "auto").lower()
+
+        # Fix: Prevent Float32 / Float64 mismatch
+        original_norm_loudness = ChatterboxTurboTTS.norm_loudness
+
+        def norm_loudness_fp32(self, wav, sr, target_lufs=-27):
+            result = original_norm_loudness(
+                self,
+                wav,
+                sr,
+                target_lufs=target_lufs,
+            )
+            return np.asarray(result, dtype=np.float32)
+
+        ChatterboxTurboTTS.norm_loudness = norm_loudness_fp32
+
+        # Select GPU / CPU
+        selected = os.getenv(
+            "CHATTERBOX_DEVICE", "auto"
+        ).lower()
+
         if selected not in ("auto", "cpu", "cuda"):
-            raise ValueError("CHATTERBOX_DEVICE must be auto, cpu or cuda")
-        _device = ("cuda" if torch.cuda.is_available() else "cpu") if selected == "auto" else selected
+            raise ValueError(
+                "CHATTERBOX_DEVICE must be auto, cpu or cuda"
+            )
+
+        _device = (
+            "cuda" if torch.cuda.is_available() else "cpu"
+        ) if selected == "auto" else selected
+
         if _device == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError("Chatterbox CUDA requested but unavailable")
+            raise RuntimeError(
+                "Chatterbox CUDA requested but unavailable"
+            )
+
+        # WAV compatibility patch for Windows
         _patch_wav_loader()
-        _model = ChatterboxTurboTTS.from_pretrained(device=_device)
+
+        # Load the model once per worker process
+        _model = ChatterboxTurboTTS.from_pretrained(
+            device=_device
+        )
+
     return _model
+
 
 
 def _handle(command):
