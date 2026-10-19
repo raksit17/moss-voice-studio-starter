@@ -201,11 +201,12 @@ Install `backend/requirements-f5-thai.txt` in a separate Python virtual environm
 
 Use the **Chatterbox-Turbo** option in **Voice Playground** for English-only zero-shot cloning and tags such as `[chuckle]`. It reuses Voice Library WAV profiles and saves generation history in the existing job API. Turbo runs in a **separate Python 3.11 environment** with a persistent worker, so subsequent jobs reuse the loaded model without loading MOSS 5B. Switching runtimes unloads the other resident speech model to free VRAM. This does not automatically unload Ollama and does not add progressive streaming for Turbo.
 
-**Setup / Windows PowerShell (from `backend`):**
+**Setup / Windows PowerShell (from `backend`) — Python 3.14.2:**
 
 ```powershell
-py -3.11 -m venv .venv-chatterbox
-.\.venv-chatterbox\Scripts\python.exe -m pip install -r requirements-chatterbox.txt
+powershell -ExecutionPolicy Bypass -File .\\install-chatterbox.ps1
 ```
+
+The installer creates an isolated Python 3.14 Chatterbox venv, installs PyTorch CUDA 12.8 wheels and applies a **local metadata-only workaround** for upstream `spacy-pkuseg` (Chinese segmentation; not needed by English Turbo). For Python 3.11, use `py -3.11 -m venv .venv-chatterbox` and install `requirements-chatterbox.txt` normally. MOSS/F5 environments remain unchanged.
 
 Start the existing API and frontend as before. In Voice Playground choose **Chatterbox-Turbo · English**, upload a consented ~10-second English WAV in Voice Library, select its profile and generate. For a warm first response, use **Model Manager → Load / Warm Turbo**. CPU fallback can be configured with `CHATTERBOX_DEVICE=cpu`; the default `auto` prefers CUDA. For troubleshooting see [Chatterbox-Turbo setup & API](docs/CHATTERBOX_TURBO.md).

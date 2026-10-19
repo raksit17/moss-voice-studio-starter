@@ -1,4 +1,7 @@
-# Install in a dedicated Python 3.11 venv to avoid MOSS/F5 dependency conflicts.
-# Chatterbox installs its own pinned Torch/torchaudio stack.
-chatterbox-tts
+# Python 3.10-3.13: pip install -r requirements-chatterbox.txt in a dedicated venv.
+# Python 3.14: run backend/install-chatterbox.ps1 (Windows) or
+# python scripts/install_chatterbox.py inside .venv-chatterbox.
+# Python 3.14 local installer patches wheel METADATA to skip the optional
+# Chinese spacy-pkuseg segmenter, not the model code.
+chatterbox-tts==0.1.7
 soundfile>=0.12
