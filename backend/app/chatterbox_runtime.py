@@ -78,8 +78,11 @@ class ChatterboxRuntime:
             self.last_error = None
 
     def _start_locked(self):
-        if self._process is not None and self._process.poll() is None:
-            return
+        if self._process is not None:
+            if self._process.poll() is None:
+                return
+            # Reap a crashed worker before relaunching (close pipes and log).
+            self._close_locked()
         executable = self._python()
         if not executable.is_file():
             raise RuntimeError(
