@@ -2,7 +2,22 @@
 
 Studio now supports Resemble AI's **Chatterbox-Turbo 350M** as a separate English-only TTS provider. It preserves MOSS and F5-TTS-THAI. Reference profiles continue to use the existing voice library and `voice_id`; no new voice training is needed.
 
-## Install on Windows (recommended RTX 4060 / 8 GB)
+## Install on Windows with Python 3.14.2 (recommended RTX 4060 / 8 GB)
+
+**Python 3.14 is supported by our local installer.** Chatterbox 0.1.7 itself requests `spacy-pkuseg`, which does not ship Python 3.14 wheels. That dependency is for Chinese segmentation; English Turbo does not require it. The installer downloads the **official PyPI wheel** and changes only its dependency metadata locally, adding a Python <3.14 marker to `spacy-pkuseg`. It recalculates the wheel RECORD checksum, then installs with normal pip dependency resolution. All inference model files remain byte-for-byte unchanged. The patched wheel is temporary, not committed or distributed.
+
+From `moss-voice-studio-starter/backend`, using Windows PowerShell:
+
+```powershell
+py --version                      # Your main Python can be 3.14.2
+powershell -ExecutionPolicy Bypass -File .\\install-chatterbox.ps1
+```
+
+This creates `backend/.venv-chatterbox` using **Python 3.14**, installs **torch 2.9.1 + cu128** with matching torchaudio for an NVIDIA GPU, patches the optional dependency metadata for English Turbo, and runs an import/CUDA check. It does not change or overwrite `backend/.venv`, and the FastAPI backend keeps using its original environment. To intentionally use CPU, pass `-Cpu`; CPU may be much slower.
+
+If an existing `.venv-chatterbox` was created with Python 3.11, stop its worker, then rebuild **only that environment** as Python 3.14. Do not delete MOSS's original `.venv`.
+
+## Alternative: Python 3.11 setup
 
 From `moss-voice-studio-starter/backend` in PowerShell:
 
@@ -12,7 +27,7 @@ py -3.11 -m venv .venv-chatterbox
 .\.venv-chatterbox\Scripts\python.exe -m pip install -r requirements-chatterbox.txt
 ```
 
-Install Python 3.11 first if `py -3.11` is unavailable. Chatterbox upstream tests Python 3.11. If torch CUDA is unavailable after installation, check the matching CUDA-enabled PyTorch/torchaudio package guidance for your driver and OS. **No weights are committed**; the first model load will download them from Hugging Face.
+This alternative requires Python 3.11 installed side-by-side. It is unnecessary if you used the Python 3.14 installer above. Chatterbox upstream tests Python 3.11. If torch CUDA is unavailable after installation, check the matching CUDA-enabled PyTorch/torchaudio package guidance for your driver and OS. **No weights are committed**; the first model load will download them from Hugging Face.
 
 In `backend/.env` (use existing configuration):
 
@@ -73,3 +88,11 @@ POST to `/v1/jobs`, poll `/v1/jobs/{id}`, then fetch `/v1/jobs/{id}/audio`. Pass
 - For the first run, ensure the Hugging Face model can download. Use `POST /v1/chatterbox/load` to warm before a conversation.
 
 See the upstream reference implementation: https://github.com/resemble-ai/chatterbox.
+
+### Python 3.14 troubleshooting
+
+- `pip install -r requirements-chatterbox.txt` **may fail on Python 3.14** with upstream's unconditional `spacy-pkuseg` dependency. Use `powershell -ExecutionPolicy Bypass -File .\\install-chatterbox.ps1` instead.
+- If `backend/.venv-chatterbox` already uses another Python version, stop its worker and rebuild **only** that environment with `py -3.14 -m venv .venv-chatterbox`.
+- Check manually: `.\\.venv-chatterbox\\Scripts\\python.exe -c "import torch; from chatterbox.tts_turbo import ChatterboxTurboTTS; print(torch.cuda.is_available())"`.
+- The first model warm may download weights. VRAM shared with Ollama may still cause CUDA OOM.
+- Python 3.14 support is an **installation compatibility path**, not a guarantee of GPU inference success with every GPU/driver combination. Actual synthesis and cloned-voice quality must be tested on Windows.
