@@ -33,7 +33,7 @@ def run_pip(*args: str) -> None:
 def conditional_pkuseg(metadata: bytes) -> bytes:
     """Return PyPI wheel METADATA with pkuseg skipped only on Python >=3.14."""
     content = metadata.decode("utf-8")
-    pattern = r"(?m)^Requires-Dist: spacy[-_]pkuseg\s*$"
+    pattern = r"(?m)^Requires-Dist: spacy[-_]pkuseg[^\S\r\n]*\r?$"
     if len(re.findall(pattern, content)) != 1:
         raise ValueError(
             "Unexpected Chatterbox wheel metadata: unmodified spacy-pkuseg "
