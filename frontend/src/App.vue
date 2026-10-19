@@ -15,6 +15,7 @@ import {
   type GenerationSettings, type SavedModel, type ModelRuntime, getModels, getModelRuntime,
   importModel, activateModel, loadModel, unloadModel, validateModel,
   type VoicePackage, getVoicePackages, buildVoicePackage, deleteVoicePackage,
+  type ChatterboxStatus, getChatterboxStatus, loadChatterbox, unloadChatterbox,
 } from './api'
 import { playPcmResponse } from './pcm-player'
 
@@ -27,6 +28,9 @@ const voices = ref<Voice[]>([])
 const savedModels = ref<SavedModel[]>([])
 const voicePackages = ref<VoicePackage[]>([])
 const selectedVoicePackage = ref('')
+const runtimeMode = ref<'moss' | 'f5' | 'chatterbox-turbo'>('moss')
+const chatterboxStatus = ref<ChatterboxStatus | null>(null)
+const chatterboxBusy = ref(false)
 const builderType = ref<'voice' | 'generation'>('generation')
 const builderSourceId = ref('')
 const builderName = ref('test1-small')
@@ -79,8 +83,8 @@ const examples = [
 const currentJob = computed(() => jobs.value.find(j => j.id === activeJobId.value) ?? null)
 const finishedCount = computed(() => jobs.value.filter(j => j.status === 'completed').length)
 const isBusy = computed(() => !!currentJob.value && ['queued', 'running'].includes(currentJob.value.status))
-const selectedVoiceName = computed(() => selectedVoicePackage.value
-  ? voicePackages.value.find(p => p.id === selectedVoicePackage.value)?.name ?? 'Saved F5 voice'
+const selectedVoiceName = computed(() => runtimeMode.value === 'f5'
+  ? voicePackages.value.find(p => p.id === selectedVoicePackage.value)?.name ?? 'Choose an F5 voice package'
   : voices.value.find(v => v.id === selectedVoice.value)?.name ?? 'Default voice')
 const packageSources = computed(() => builderType.value === 'voice'
   ? voices.value.filter(v => v.language === 'Thai' && !!v.transcript?.trim())
@@ -139,7 +143,8 @@ function navigate(next: Page) {
 }
 async function refresh() {
   try {
-    const [h, vs, js, st, ms, rt, vp] = await Promise.all([getHealth(), getVoices(), getJobs(), getStreamStatus(), getModels(), getModelRuntime(), getVoicePackages()])
+    const [h, vs, js, st, ms, rt, vp, cb] = await Promise.all([getHealth(), getVoices(), getJobs(), getStreamStatus(), getModels(), getModelRuntime(), getVoicePackages(), getChatterboxStatus()])
+    chatterboxStatus.value = cb
     voicePackages.value = vp
     if (selectedVoicePackage.value && !vp.some(p => p.id === selectedVoicePackage.value)) selectedVoicePackage.value = ''
     savedModels.value = ms
@@ -159,11 +164,16 @@ async function generate() {
   if (!text.value.trim()) return alertMessage('กรุณาพิมพ์ข้อความก่อนสร้างเสียง', 'error')
   creating.value = true
   try {
-    if (selectedVoicePackage.value && language.value !== 'Thai') throw new Error('F5-TTS-THAI Voice Package รองรับเสียงภาษาไทยในเวอร์ชันนี้')
+    if (runtimeMode.value === 'f5' && !selectedVoicePackage.value) throw new Error('เลือก F5 Voice Package ก่อนสร้างเสียง')
+    if (runtimeMode.value === 'f5' && language.value !== 'Thai') throw new Error('F5-TTS-THAI รองรับภาษาไทยเท่านั้น')
+    if (runtimeMode.value === 'chatterbox-turbo' && language.value !== 'English') throw new Error('Chatterbox-Turbo รองรับภาษาอังกฤษเท่านั้น')
+    const isF5 = runtimeMode.value === 'f5'
+    const isMoss = runtimeMode.value === 'moss'
     const job = await createJob(text.value.trim(), language.value,
-      selectedVoicePackage.value ? null : selectedVoice.value || null,
-      generationSettings(), selectedVoicePackage.value ? null : selectedModel.value,
-      selectedVoicePackage.value || null)
+      isF5 ? null : selectedVoice.value || null,
+      generationSettings(), isMoss ? selectedModel.value : null,
+      isF5 ? selectedVoicePackage.value : null,
+      runtimeMode.value === 'chatterbox-turbo' ? 'chatterbox-turbo' : 'moss')
     activeJobId.value = job.id
     alertMessage('ส่งงานเข้า Voice Engine แล้ว — ดูสถานะได้ในรายการด้านล่าง')
     await refresh()
@@ -172,6 +182,24 @@ async function generate() {
   } finally {
     creating.value = false
   }
+}
+function chooseRuntime() {
+  if (runtimeMode.value === 'f5') language.value = 'Thai'
+  if (runtimeMode.value === 'chatterbox-turbo') {
+    language.value = 'English'
+    if (/^[\u0E00-\u0E7F\s.,!?…]+$/.test(text.value)) {
+      text.value = "Welcome back! [chuckle] I've been waiting for you."
+    }
+  }
+}
+async function chatterboxAction(action: 'load' | 'unload') {
+  chatterboxBusy.value = true
+  try {
+    chatterboxStatus.value = action === 'load' ? await loadChatterbox() : await unloadChatterbox()
+    alertMessage(action === 'load' ? 'Chatterbox-Turbo is loaded and ready' : 'Chatterbox-Turbo unloaded')
+    await refresh()
+  } catch (e) { alertMessage((e as Error).message, 'error') }
+  finally { chatterboxBusy.value = false }
 }
 async function modelAction(action: 'load' | 'unload' | 'activate' | 'validate' | 'import') {
   modelBusy.value = true
@@ -199,6 +227,7 @@ async function saveVoicePackage() {
     const created = await buildVoicePackage(builderName.value.trim(), builderType.value, builderSourceId.value)
     await refresh()
     selectedVoicePackage.value = created.id
+    runtimeMode.value = 'f5'
     language.value = 'Thai'
     alertMessage('บันทึก package แล้ว · ใช้ F5 ได้โดยไม่ต้องโหลด MOSS')
   } catch (e) { alertMessage((e as Error).message, 'error') }
@@ -206,6 +235,7 @@ async function saveVoicePackage() {
 }
 function useVoicePackage(id: string) {
   selectedVoicePackage.value = id
+  runtimeMode.value = 'f5'
   language.value = 'Thai'
   navigate('studio')
 }
@@ -283,6 +313,7 @@ async function copy(textToCopy: string) {
 }
 async function liveSpeak() {
   if (!text.value.trim() || liveActive.value) return
+  if (runtimeMode.value !== 'moss') return alertMessage('Streaming รองรับเฉพาะ MOSS/SGLang; Chatterbox-Turbo ใช้ WAV jobs', 'error')
   if (!liveStatus.value?.ready) {
     alertMessage('ต้องเปิด SGLang-Omni และตั้งค่า SGLANG_BASE_URL ก่อน', 'error')
     return
@@ -382,29 +413,37 @@ onUnmounted(() => {
 
           <section class="panel details-panel" style="margin-bottom:18px">
             <label class="modal-label">Speech runtime</label>
-            <select class="modal-input" v-model="selectedVoicePackage">
-              <option value="">MOSS-TTS v1.5 (Original / imported)</option>
-              <option v-for="p in voicePackages" :key="p.id" :value="p.id">{{ p.name }} — F5-TTS-THAI · Reusable Voice Package</option>
+            <select class="modal-input" v-model="runtimeMode" @change="chooseRuntime">
+              <option value="moss">MOSS-TTS v1.5 (Thai / English)</option>
+              <option value="chatterbox-turbo">Chatterbox-Turbo · 350M · English voice cloning</option>
+              <option value="f5">F5-TTS-THAI · Saved Voice Package</option>
             </select>
-            <label v-if="!selectedVoicePackage" class="modal-label">MOSS Generation Model</label>
-            <select v-if="!selectedVoicePackage" class="modal-input" v-model="selectedModel"><option v-for="m in savedModels.filter(x=>x.status==='ready')" :key="m.id" :value="m.id">{{ m.name }} ({{ m.precision.toUpperCase() }})</option></select>
-            <p class="section-desc">{{ selectedVoicePackage
-              ? 'Independent F5 Thai runtime · MOSS unloads automatically · package is reference audio, not a trained checkpoint.'
-              : 'MOSS checkpoint selection for this job. Switch to a saved package to avoid loading MOSS.' }}</p>
+            <template v-if="runtimeMode === 'f5'">
+              <label class="modal-label">Saved F5 Voice Package</label>
+              <select class="modal-input" v-model="selectedVoicePackage">
+                <option value="">Choose saved Thai package...</option>
+                <option v-for="p in voicePackages" :key="p.id" :value="p.id">{{ p.name }} — F5-TTS-THAI</option>
+              </select>
+            </template>
+            <label v-if="runtimeMode === 'moss'" class="modal-label">MOSS Generation Model</label>
+            <select v-if="runtimeMode === 'moss'" class="modal-input" v-model="selectedModel"><option v-for="m in savedModels.filter(x=>x.status==='ready')" :key="m.id" :value="m.id">{{ m.name }} ({{ m.precision.toUpperCase() }})</option></select>
+            <p class="section-desc" v-if="runtimeMode === 'chatterbox-turbo'">English only · zero-shot voice cloning from uploaded WAV · keeps a separate 350M model loaded for later jobs. {{ chatterboxStatus?.ready ? '● Ready on ' + chatterboxStatus.device : chatterboxStatus?.python_found ? '○ Standby: first generation loads weights' : '○ Install separate Chatterbox Python 3.11 venv first' }}</p>
+            <p class="section-desc" v-else-if="runtimeMode === 'f5'">F5 Thai runs in a separate process using a saved reference package. No trained checkpoint needed.</p>
+            <p class="section-desc" v-else>MOSS checkpoint selection for this job. English Chatterbox-Turbo is available as an independent runtime.</p>
           </section>
           <div class="studio-grid">
             <section class="panel editor-panel">
               <div class="panel-heading"><div><span class="panel-kicker">01 / CREATE</span><h2><WandSparkles :size="19" class="heading-icon"/> Text to Speech</h2><p>พิมพ์ข้อความที่คุณต้องการให้ AI พูด</p></div><div class="pill"><span class="pill-dot"></span> Local Inference</div></div>
               <div class="field-label">Language <span>Choose output language</span></div>
-              <div class="language-tabs"><button :class="{ selected: language === 'Thai' }" @click="language = 'Thai'">🇹🇭 <span>Thai</span></button><button :class="{ selected: language === 'English' }" @click="language = 'English'">🇺🇸 <span>English</span></button></div>
+              <div class="language-tabs"><button :disabled="runtimeMode === 'chatterbox-turbo'" :class="{ selected: language === 'Thai' }" @click="language = 'Thai'">🇹🇭 <span>Thai</span></button><button :disabled="runtimeMode === 'f5'" :class="{ selected: language === 'English' }" @click="language = 'English'">🇺🇸 <span>English</span></button></div>
               <div class="field-label field-label-space">Your text <span>Up to 600 characters</span></div>
               <div class="text-editor"><textarea v-model="text" maxlength="600" spellcheck="false" placeholder="พิมพ์ข้อความที่ต้องการสร้างเสียงที่นี่..."></textarea><div class="editor-bottom"><span><Sparkles :size="13"/> Supports Thai / English</span><span>{{ text.length }} / 600</span></div></div>
               <div class="field-label field-label-space">Quick prompts <span>Click to try</span></div>
               <div class="prompt-row"><button v-for="prompt in examples" :key="prompt.name" @click="text=prompt.text">{{ prompt.name }}</button></div>
               <div class="editor-divider"></div>
-              <div class="stream-params"><label for="live-style">Streaming style hint (optional)</label><input id="live-style" v-model="liveInstructions" maxlength="240" placeholder="e.g. warm, gentle, cheerful" /><span>{{ liveStatus?.ready ? "● SGLang ready · progressive PCM 48 kHz mono" : "○ Streaming requires SGLang-Omni server" }}</span></div><div class="action-row"><div class="quality-mark"><ShieldCheck :size="17"/><div><strong>{{ selectedVoicePackage ? '24 kHz · WAV (F5)' : '48 kHz · Stereo WAV' }}</strong><span>High fidelity audio output</span></div></div><button class="button primary generate-btn" :disabled="creating || isBusy || !text.trim()" @click="generate"><Waves v-if="!creating && !isBusy" :size="18"/><RefreshCcw v-else :size="18" class="spin"/>{{ creating || isBusy ? 'Generating...' : 'Generate Speech' }}</button></div>
+              <div class="stream-params"><label for="live-style">Streaming style hint (optional)</label><input id="live-style" v-model="liveInstructions" maxlength="240" placeholder="e.g. warm, gentle, cheerful" /><span>{{ liveStatus?.ready ? "● SGLang ready · progressive PCM 48 kHz mono" : "○ Streaming requires SGLang-Omni server" }}</span></div><div class="action-row"><div class="quality-mark"><ShieldCheck :size="17"/><div><strong>{{ runtimeMode === 'f5' ? '24 kHz · WAV (F5)' : runtimeMode === 'chatterbox-turbo' ? 'Chatterbox-Turbo · WAV' : '48 kHz · Stereo WAV' }}</strong><span>High fidelity audio output</span></div></div><button class="button primary generate-btn" :disabled="creating || isBusy || !text.trim()" @click="generate"><Waves v-if="!creating && !isBusy" :size="18"/><RefreshCcw v-else :size="18" class="spin"/>{{ creating || isBusy ? 'Generating...' : 'Generate Speech' }}</button></div>
               <div class="stream-actions">
-                <button v-if="!liveActive" class="button secondary" :disabled="!text.trim() || !liveStatus?.ready || !!selectedVoicePackage" @click="liveSpeak">
+                <button v-if="!liveActive" class="button secondary" :disabled="!text.trim() || !liveStatus?.ready || runtimeMode !== 'moss'" @click="liveSpeak">
                   <Zap :size="17"/> Stream Speech (Live)
                 </button>
                 <button v-else class="button secondary" @click="stopLive">
@@ -416,9 +455,10 @@ onUnmounted(() => {
 
             <section class="panel voice-panel">
               <div class="panel-heading"><div><span class="panel-kicker">02 / VOICE IDENTITY</span><h2><Mic2 :size="19" class="heading-icon"/> Choose a Voice</h2><p>เลือกเสียงต้นแบบของตัวละคร</p></div></div>
-              <div class="voice-selection"><div class="voice-avatar"><AudioLines :size="24"/></div><div class="voice-select-text"><strong>{{ selectedVoiceName }}</strong><span>{{ selectedVoicePackage ? 'Saved F5 reference package · zero-shot' : selectedVoice ? 'MOSS zero-shot voice cloning' : 'No reference voice' }}</span></div><ChevronDown :size="18" class="select-chevron"/><select v-model="selectedVoice" :disabled="!!selectedVoicePackage"><option value="">Default voice</option><option v-for="voice in voices" :key="voice.id" :value="voice.id">{{ voice.name }}</option></select></div>
+              <div class="voice-selection"><div class="voice-avatar"><AudioLines :size="24"/></div><div class="voice-select-text"><strong>{{ selectedVoiceName }}</strong><span>{{ runtimeMode === 'f5' ? 'Saved F5 reference package · zero-shot' : selectedVoice ? (runtimeMode === 'chatterbox-turbo' ? 'Chatterbox English voice cloning' : 'MOSS zero-shot voice cloning') : 'Default voice (choose a profile to clone)' }}</span></div><ChevronDown :size="18" class="select-chevron"/><select v-model="selectedVoice" :disabled="runtimeMode === 'f5'"><option value="">Default voice</option><option v-for="voice in voices" :key="voice.id" :value="voice.id">{{ voice.name }}</option></select></div>
+              <p v-if="runtimeMode === 'chatterbox-turbo'" class="section-desc">Tip: choose a clean, authorized ~10-second English WAV. Add [chuckle] or [laugh] in the English text to test emotion. Default voice works without a reference.</p>
               <div class="upload-card" @click="uploadOpen = true"><div class="upload-icon"><UploadCloud :size="25"/></div><strong>Add your own voice</strong><span>อัปโหลดเสียง WAV ที่ได้รับอนุญาต เพื่อใช้สร้างเสียงพูดใหม่ด้วยบุคลิกเสียงเดิม</span><button class="upload-link">Upload reference audio <span>↗</span></button></div>
-              <div v-if="!selectedVoicePackage" class="settings-section"><h3><SlidersHorizontal :size="16"/> Model parameters</h3><label class="setting-control"><span>Temperature</span><input v-model.number="temperature" type="number" min="0.1" max="2" step="0.1"/></label><label class="setting-control"><span>Top P</span><input v-model.number="topP" type="number" min="0.05" max="1" step="0.05"/></label><label class="setting-control"><span>Top K</span><input v-model.number="topK" type="number" min="1" max="100" step="1"/></label><div class="info-setting"><span>Voice method</span><strong>Zero-shot</strong></div><p class="settings-note"><Info :size="14"/> ค่าเริ่มต้นอิงตามคำแนะนำของ MOSS; ปรับได้ต่อการสร้าง</p></div>
+              <div v-if="runtimeMode === 'moss'" class="settings-section"><h3><SlidersHorizontal :size="16"/> Model parameters</h3><label class="setting-control"><span>Temperature</span><input v-model.number="temperature" type="number" min="0.1" max="2" step="0.1"/></label><label class="setting-control"><span>Top P</span><input v-model.number="topP" type="number" min="0.05" max="1" step="0.05"/></label><label class="setting-control"><span>Top K</span><input v-model.number="topK" type="number" min="1" max="100" step="1"/></label><div class="info-setting"><span>Voice method</span><strong>Zero-shot</strong></div><p class="settings-note"><Info :size="14"/> ค่าเริ่มต้นอิงตามคำแนะนำของ MOSS; ปรับได้ต่อการสร้าง</p></div>
             </section>
           </div>
 
@@ -478,9 +518,22 @@ onUnmounted(() => {
 
         <template v-if="page === 'voices'"><div class="page-header"><div><div class="eyebrow"><Library :size="14"/> YOUR LIBRARY</div><h1>Voice <em>Library.</em></h1><p>จัดการเสียงต้นแบบสำหรับ Zero-shot Voice Cloning และใช้ Voice ID กับแอปอื่น</p></div><button class="button primary" @click="uploadOpen = true"><Plus :size="17"/> Add a voice</button></div><div class="panel library-panel"><div class="results-heading"><div><h2><Mic2 :size="20" class="heading-icon"/> Saved profiles</h2><p>{{ voices.length }} voices available</p></div></div><div v-if="voices.length" class="voice-list"><div v-for="voice in voices" :key="voice.id" class="voice-item"><div class="voice-item-icon"><AudioLines :size="21"/></div><div class="voice-item-info"><strong>{{ voice.name }}<small v-if="voice.character" class="character-tag">{{ voice.character }}</small></strong><span>{{ voice.language }} · {{ dateLabel(voice.created_at) }} · {{ voice.id.slice(0,8) }}</span></div><div class="voice-item-actions"><button class="small-button" @click="selectedVoice=voice.id; navigate('studio')"><WandSparkles :size="15"/> Use voice</button><button class="icon-button danger-icon" title="Delete voice" @click="removeVoice(voice)"><Trash2 :size="17"/></button></div></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Mic2 :size="29"/></div><strong>No voices saved yet</strong><span>เพิ่มไฟล์เสียง WAV ที่มีสิทธิ์ใช้งาน เพื่อโคลนเสียงของตัวละคร</span><button class="button secondary" @click="uploadOpen=true"><UploadCloud :size="16"/> Upload reference</button></div></div></template>
 
-        <template v-if="page === 'history'"><div class="page-header"><div><div class="eyebrow"><Clock3 :size="14"/> AUDIO OUTPUTS</div><h1>Generation <em>History.</em></h1><p>ตรวจสถานะงานย้อนหลัง เล่น และดาวน์โหลดไฟล์เสียงที่สร้างไว้</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Refresh</button></div><div class="panel library-panel"><div class="results-heading"><h2><Headphones :size="20" class="heading-icon"/> Recent jobs</h2><span class="waiting-tag">{{ historyJobs.length }} records</span></div><div v-if="historyJobs.length" class="job-list"><div v-for="job in historyJobs" :key="job.id" class="job-item"><div class="job-icon"><FileAudio :size="20"/></div><div class="job-info"><strong>{{ job.text }}</strong><span>{{ job.language }} · {{ dateLabel(job.created_at) }} · {{ jobTimeTitle(job) }}: {{ displayDuration(jobSeconds(job)) }}</span><small v-if="job.error" class="error-text">{{ job.error }}</small></div><span class="status-tag" :class="job.status">{{ job.status }}</span><button class="icon-button" :disabled="job.status !== 'completed'" @click="playAudio(job.audio_url)" title="Play"><Play :size="16"/></button><button class="button secondary history-download" :disabled="job.status !== 'completed'" @click="downloadAudio(job.audio_url, audioFilename(job))" title="Download WAV"><ArrowDownToLine :size="16"/> WAV</button></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Clock3 :size="29"/></div><strong>No generations yet</strong><span>สร้างเสียงจากหน้า Playground แล้วผลลัพธ์จะอยู่ที่นี่</span><button class="button secondary" @click="navigate('studio')">Open Playground</button></div></div></template>
+        <template v-if="page === 'history'"><div class="page-header"><div><div class="eyebrow"><Clock3 :size="14"/> AUDIO OUTPUTS</div><h1>Generation <em>History.</em></h1><p>ตรวจสถานะงานย้อนหลัง เล่น และดาวน์โหลดไฟล์เสียงที่สร้างไว้</p></div><button class="button secondary" @click="refresh"><RefreshCcw :size="16"/> Refresh</button></div><div class="panel library-panel"><div class="results-heading"><h2><Headphones :size="20" class="heading-icon"/> Recent jobs</h2><span class="waiting-tag">{{ historyJobs.length }} records</span></div><div v-if="historyJobs.length" class="job-list"><div v-for="job in historyJobs" :key="job.id" class="job-item"><div class="job-icon"><FileAudio :size="20"/></div><div class="job-info"><strong>{{ job.text }}</strong><span>{{ job.engine || 'moss' }} · {{ job.language }} · {{ dateLabel(job.created_at) }} · {{ jobTimeTitle(job) }}: {{ displayDuration(jobSeconds(job)) }}</span><small v-if="job.error" class="error-text">{{ job.error }}</small></div><span class="status-tag" :class="job.status">{{ job.status }}</span><button class="icon-button" :disabled="job.status !== 'completed'" @click="playAudio(job.audio_url)" title="Play"><Play :size="16"/></button><button class="button secondary history-download" :disabled="job.status !== 'completed'" @click="downloadAudio(job.audio_url, audioFilename(job))" title="Download WAV"><ArrowDownToLine :size="16"/> WAV</button></div></div><div v-else class="empty-result tall"><div class="empty-wave"><Clock3 :size="29"/></div><strong>No generations yet</strong><span>สร้างเสียงจากหน้า Playground แล้วผลลัพธ์จะอยู่ที่นี่</span><button class="button secondary" @click="navigate('studio')">Open Playground</button></div></div></template>
 
         <template v-if="page === 'model'">
+          <section class="panel details-panel" style="margin-bottom:18px">
+            <div class="eyebrow"><Zap :size="14"/> ENGLISH LOW-LATENCY TTS</div>
+            <h2>Chatterbox-Turbo · 350M</h2>
+            <p class="section-desc">English zero-shot voice cloning with optional paralinguistic tags. Model stays loaded in an isolated Python 3.11 worker to accelerate subsequent jobs. MOSS and F5 remain available.</p>
+            <p class="section-desc">Status: {{ chatterboxStatus?.state || 'unknown' }} · Device: {{ chatterboxStatus?.device || 'not loaded' }} · {{ chatterboxStatus?.python_found ? 'Python runtime found' : 'Python runtime missing' }}</p>
+            <p v-if="chatterboxStatus?.error" class="section-desc">Error: {{ chatterboxStatus.error }}</p>
+            <p class="section-desc">Worker log: {{ chatterboxStatus?.log_path || 'backend/data/logs/chatterbox.log' }}</p>
+            <div class="modal-actions">
+              <button class="button primary" :disabled="chatterboxBusy || !chatterboxStatus?.python_found" @click="chatterboxAction('load')">Load / Warm Turbo</button>
+              <button class="button secondary" :disabled="chatterboxBusy || !chatterboxStatus?.ready" @click="chatterboxAction('unload')">Unload Turbo</button>
+              <button class="button secondary" @click="runtimeMode='chatterbox-turbo'; chooseRuntime(); navigate('studio')">Use Turbo in Playground</button>
+            </div>
+          </section>
           <section class="panel details-panel" style="margin-bottom:18px">
             <div class="eyebrow"><WandSparkles :size="14"/> VOICE MODEL BUILDER</div>
             <h2>Create Small Voice Package</h2>
@@ -542,7 +595,7 @@ onUnmounted(() => {
           </section>
         </template>
 
-        <template v-if="page === 'api'"><div class="page-header"><div><div class="eyebrow"><Code2 :size="14"/> DEVELOPER TOOLS</div><h1>API <em>Integration.</em></h1><p>เรียกใช้ Voice Studio จาก Anime AI Companion หรือแอปอื่น ๆ ด้วย HTTP API</p></div></div><div class="panel details-panel"><div class="results-heading"><h2><KeyRound :size="20" class="heading-icon"/> Local API</h2><span class="waiting-tag">REST · WAV / Live PCM</span></div><div class="endpoint"><span class="method post">POST</span><code>/v1/jobs</code><button class="icon-button" @click="copy('/v1/jobs')"><Copy :size="16"/></button></div><p class="section-desc">ส่งข้อความ ภาษา และ Voice ID จากคลังเสียง คืน Job ID เพื่อใช้ตรวจสถานะ</p><div class="code-head"><span>REQUEST BODY</span><button @click="copy(JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2))"><Copy :size="14"/> Copy</button></div><pre class="code-block">{{ JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2) }}</pre><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id/audio</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/stream</code></div><p class="section-desc">SGLang-Omni progressive audio stream: raw PCM s16le mono 48 kHz, with language, voice_id, and optional instructions.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/stream/status</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/voice-models</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voice-models</code></div><p class="section-desc">Build from a completed job or Voice Profile; generate with voice_model_id and without MOSS model_id.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/voices</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voices</code></div><div class="model-note"><ShieldCheck :size="18"/><div><strong>Authentication</strong><p>ทุก request ต้องมี header <code>X-API-Key</code> สำหรับการใช้งานจริง ให้เรียกผ่าน Backend-to-Backend ไม่ควรฝัง secret ในเว็บที่เปิดสาธารณะ</p></div></div></div></template>
+        <template v-if="page === 'api'"><div class="page-header"><div><div class="eyebrow"><Code2 :size="14"/> DEVELOPER TOOLS</div><h1>API <em>Integration.</em></h1><p>เรียกใช้ Voice Studio จาก Anime AI Companion หรือแอปอื่น ๆ ด้วย HTTP API</p></div></div><div class="panel details-panel"><div class="results-heading"><h2><KeyRound :size="20" class="heading-icon"/> Local API</h2><span class="waiting-tag">REST · WAV / Live PCM</span></div><div class="endpoint"><span class="method post">POST</span><code>/v1/jobs</code><button class="icon-button" @click="copy('/v1/jobs')"><Copy :size="16"/></button></div><p class="section-desc">ส่งข้อความ ภาษา และ Voice ID จากคลังเสียง คืน Job ID เพื่อใช้ตรวจสถานะ</p><div class="code-head"><span>REQUEST BODY</span><button @click="copy(JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2))"><Copy :size="14"/> Copy</button></div><pre class="code-block">{{ JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2) }}</pre><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id/audio</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/chatterbox/status</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/chatterbox/load</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/chatterbox/unload</code></div><p class="section-desc">For Chatterbox-Turbo WAV jobs use engine: chatterbox-turbo and language: English. Pick a voice_id to clone an existing authorized WAV profile.</p><div class="endpoint"><span class="method post">POST</span><code>/v1/stream</code></div><p class="section-desc">SGLang-Omni progressive audio stream: raw PCM s16le mono 48 kHz, with language, voice_id, and optional instructions.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/stream/status</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/voice-models</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voice-models</code></div><p class="section-desc">Build from a completed job or Voice Profile; generate with voice_model_id and without MOSS model_id.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/voices</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voices</code></div><div class="model-note"><ShieldCheck :size="18"/><div><strong>Authentication</strong><p>ทุก request ต้องมี header <code>X-API-Key</code> สำหรับการใช้งานจริง ให้เรียกผ่าน Backend-to-Backend ไม่ควรฝัง secret ในเว็บที่เปิดสาธารณะ</p></div></div></div></template>
         <footer class="page-footer"><span>MOSS Voice Studio · Built for local AI creativity</span><span>Open-source model · Phase 3</span></footer>
       </div>
     </main>

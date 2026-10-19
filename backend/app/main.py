@@ -11,10 +11,12 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from .config import settings
 from .db import execute, initialize, now_iso, query_all, query_one
 from .engine import engine
+from .chatterbox_runtime import runtime as chatterbox
 from .model_manager import ImportModel, import_model, list_models, resolve_model, register_original, activate, default_model
 from .streaming import StreamBody, stream_pcm, status as stream_status
 from .voice_models.registry import BuildVoicePackage, build_package, delete_package, list_packages, resolve_package
@@ -45,6 +47,7 @@ def authorize(x_api_key: str | None = Header(default=None)) -> None:
 class GenerateBody(BaseModel):
     text: str = Field(min_length=1, max_length=600)
     language: str = 'Thai'
+    engine: Literal['moss', 'chatterbox-turbo'] = 'moss'
     voice_id: str | None = None
     model_id: str | None = None
     voice_model_id: str | None = None
@@ -56,7 +59,7 @@ class GenerateBody(BaseModel):
 def public_job(row: dict) -> dict:
     return {
         'id': row['id'], 'voice_id': row['voice_id'], 'model_id': row.get('model_id'), 'voice_model_id': row.get('voice_model_id'), 'text': row['text'],
-        'language': row['language'], 'status': row['status'], 'error': row['error'],
+        'language': row['language'], 'engine': row.get('engine', 'moss'), 'status': row['status'], 'error': row['error'],
         'created_at': row['created_at'], 'updated_at': row['updated_at'],
         'started_at': row.get('started_at'), 'finished_at': row.get('finished_at'),
         'duration_seconds': row.get('duration_seconds'),
@@ -146,7 +149,7 @@ def delete_voice(voice_id: str):
     return {'deleted': True}
 
 
-def _process_job(job_id: str, text: str, language: str, reference: Path | None, generation: dict, selected_model: dict | None, voice_package: dict | None = None) -> None:
+def _process_job(job_id: str, text: str, language: str, reference: Path | None, generation: dict, selected_model: dict | None, voice_package: dict | None = None, engine_name: str = 'moss') -> None:
     output = settings.data_dir / 'generations' / f'{job_id}.wav'
     started_clock = None
     try:
@@ -155,10 +158,15 @@ def _process_job(job_id: str, text: str, language: str, reference: Path | None, 
         execute('UPDATE jobs SET status=?, started_at=?, updated_at=? WHERE id=?',
                 ('running', started_at, started_at, job_id))
         if voice_package is not None:
-            # One executor queues MOSS and F5 jobs; release MOSS GPU memory first.
+            # One executor serializes GPU models; release previous resident models.
+            chatterbox.unload()
             engine.unload()
             synthesize_f5(text, voice_package, output)
+        elif engine_name == 'chatterbox-turbo':
+            engine.unload()
+            chatterbox.synthesize(text, reference, output)
         else:
+            chatterbox.unload()
             engine.synthesize(text, language, reference, output, generation, selected_model)
         finished_at = now_iso()
         duration = round(time.perf_counter() - started_clock, 2)
@@ -181,6 +189,10 @@ def create_job(body: GenerateBody):
         raise HTTPException(422, detail='Supported languages: Thai / English')
     if not body.text.strip():
         raise HTTPException(422, detail='Text cannot be blank')
+    if body.engine == 'chatterbox-turbo' and body.language != 'English':
+        raise HTTPException(422, detail='Chatterbox-Turbo supports English output only')
+    if body.engine == 'chatterbox-turbo' and (body.model_id or body.voice_model_id):
+        raise HTTPException(422, detail='Chatterbox-Turbo uses voice_id, not MOSS model_id or F5 voice_model_id')
     if body.voice_model_id and (body.voice_id or body.model_id):
         raise HTTPException(422, detail='voice_model_id cannot be combined with MOSS voice_id or model_id')
     voice_package = resolve_package(body.voice_model_id) if body.voice_model_id else None
@@ -189,18 +201,19 @@ def create_job(body: GenerateBody):
     voice = query_one('SELECT * FROM voices WHERE id=?', (body.voice_id,)) if body.voice_id else None
     if body.voice_id and not voice:
         raise HTTPException(404, detail='Selected voice not found')
-    model = None if voice_package else resolve_model(body.model_id)
+    model = None if voice_package or body.engine == 'chatterbox-turbo' else resolve_model(body.model_id)
+    job_engine = 'f5-tts-th' if voice_package else body.engine
     if not slots.acquire(blocking=False):
         raise HTTPException(429, detail='Generation queue full (8 jobs)')
     job_id = str(uuid4())
     timestamp = now_iso()
     generation = {'temperature': body.temperature, 'top_p': body.top_p, 'top_k': body.top_k}
     try:
-        execute('INSERT INTO jobs(id,voice_id,text,language,status,created_at,updated_at,settings_json,model_id,voice_model_id) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        execute('INSERT INTO jobs(id,voice_id,text,language,status,created_at,updated_at,settings_json,model_id,voice_model_id,engine) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
                 (job_id, body.voice_id, body.text.strip(), body.language, 'queued', timestamp, timestamp,
-                 json.dumps(generation), model['id'] if model else None, voice_package['id'] if voice_package else None))
+                 json.dumps(generation), model['id'] if model else None, voice_package['id'] if voice_package else None, job_engine))
         executor.submit(_process_job, job_id, body.text.strip(), body.language,
-                        Path(voice['file_path']) if voice else None, generation, model, voice_package)
+                        Path(voice['file_path']) if voice else None, generation, model, voice_package, job_engine)
     except Exception:
         slots.release()
         raise
@@ -237,6 +250,26 @@ async def stream_speech(body: StreamBody):
     """Return progressive raw PCM directly from the running SGLang model server."""
     return await stream_pcm(body)
 
+@app.get('/v1/chatterbox/status', dependencies=[Depends(authorize)])
+def chatterbox_status():
+    return chatterbox.status()
+
+
+@app.post('/v1/chatterbox/load', dependencies=[Depends(authorize)])
+def chatterbox_load():
+    def warm():
+        engine.unload()
+        return chatterbox.load()
+    executor.submit(warm).result()
+    return chatterbox.status()
+
+
+@app.post('/v1/chatterbox/unload', dependencies=[Depends(authorize)])
+def chatterbox_unload():
+    executor.submit(chatterbox.unload).result()
+    return chatterbox.status()
+
+
 @app.get('/v1/models', dependencies=[Depends(authorize)])
 def models_list():
     return {'items': list_models()}
@@ -261,7 +294,10 @@ def models_runtime():
 @app.post('/v1/models/{model_id}/load', dependencies=[Depends(authorize)])
 def models_load(model_id: str):
     model = resolve_model(model_id)
-    executor.submit(engine.load_model, model).result()
+    def load_moss():
+        chatterbox.unload()
+        engine.load_model(model)
+    executor.submit(load_moss).result()
     return models_runtime()
 
 
@@ -287,6 +323,7 @@ def models_validate(model_id: str):
     test_path = settings.data_dir / 'generations' / f'validation-{_uuid()}.wav'
     def check():
         try:
+            chatterbox.unload()
             engine.unload()
             engine.synthesize('สวัสดีค่ะ', 'Thai', None, test_path, {}, model)
             with wave.open(str(test_path), 'rb') as w:
