@@ -8,3 +8,4 @@ models/
 .testpackages/
 .testtmp/
 .venv-f5/
+\n.venv-chatterbox/\n
