@@ -71,6 +71,8 @@ def initialize() -> None:
         if 'character' not in fields:
             con.execute("ALTER TABLE voices ADD COLUMN character TEXT NOT NULL DEFAULT ''")
         job_fields = {row[1] for row in con.execute('PRAGMA table_info(jobs)')}
+        if 'engine' not in job_fields:
+            con.execute("ALTER TABLE jobs ADD COLUMN engine TEXT NOT NULL DEFAULT 'moss'")
         if 'settings_json' not in job_fields:
             con.execute("ALTER TABLE jobs ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'")
         if 'model_id' not in job_fields:
