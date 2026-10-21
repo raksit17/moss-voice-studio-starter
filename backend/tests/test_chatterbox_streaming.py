@@ -73,7 +73,7 @@ def test_chatterbox_stream_voice_validation_and_releases_slot(monkeypatch):
     result = client.post('/v1/stream', headers=HEADERS, json={
         'text': 'Hello.', 'engine': 'chatterbox-turbo', 'language': 'English',
         'voice_id': voice.json()['id'],
-        'temperature': .6, 'top_p': .9, 'top_k': 200,
+        'temperature': .6, 'top_p': .9, 'top_k': 80,
     })
     assert result.status_code == 200, result.text
     assert len(result.content) == 4800
