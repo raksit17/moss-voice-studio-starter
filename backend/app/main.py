@@ -33,7 +33,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=['GET', 'POST', 'DELETE'],
     allow_headers=['Content-Type', 'X-API-Key'],
-    expose_headers=['X-Audio-Encoding', 'X-Sample-Rate', 'X-Channels'],
+    expose_headers=['X-Audio-Encoding', 'X-Sample-Rate', 'X-Channels', 'X-Stream-Mode'],
 )
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='moss-inference')
 slots = threading.BoundedSemaphore(8)

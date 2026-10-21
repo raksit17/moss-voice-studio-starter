@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     chatterbox_python: str = ''
     chatterbox_device: str = 'auto'
     chatterbox_timeout_seconds: int = 300
+    chatterbox_temperature: float = 0.8
+    chatterbox_top_p: float = 0.95
+    chatterbox_top_k: int = 1000
     f5_python: str = ''
     f5_timeout_seconds: int = 600
     sglang_base_url: str = ''

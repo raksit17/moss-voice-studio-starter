@@ -151,13 +151,14 @@ class ChatterboxRuntime:
     def load(self):
         return self._call({"command": "load"})
 
-    def synthesize(self, text: str, reference: Path | None, output: Path):
+    def synthesize(self, text: str, reference: Path | None, output: Path, generation: dict | None = None):
         output.parent.mkdir(parents=True, exist_ok=True)
         # A validated local reference path comes from the studio's own voice registry.
         self._call({
             "command": "synthesize", "text": text,
             "reference_wav": str(reference.resolve()) if reference else None,
             "output_wav": str(output.resolve()),
+            "generation": generation or {},
         })
         if not output.is_file() or output.stat().st_size <= 44:
             raise RuntimeError("Chatterbox did not produce a valid WAV")
