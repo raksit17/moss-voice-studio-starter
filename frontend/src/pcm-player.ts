@@ -1,5 +1,5 @@
 /**
- * Progressive PCM s16le mono player for the official SGLang-Omni stream.
+ * Progressive PCM s16le mono player for MOSS/SGLang 48k and Chatterbox 24k.
  * Each chunk is scheduled as an AudioBufferSourceNode; chunks do not wait for
  * the final response. AudioContext resamples 48k input for the user's device.
  */
@@ -13,8 +13,8 @@ export async function playPcmResponse(
   const encoding = response.headers.get('X-Audio-Encoding')
   const rate = Number(response.headers.get('X-Sample-Rate') ?? '48000')
   const channels = Number(response.headers.get('X-Channels') ?? '1')
-  if (encoding !== 'pcm_s16le' || rate !== 48000 || channels !== 1)
-    throw new Error('Unexpected PCM format. Expected signed 16-bit mono 48 kHz')
+  if (encoding !== 'pcm_s16le' || ![24000, 48000].includes(rate) || channels !== 1)
+    throw new Error('Unexpected PCM format. Expected signed 16-bit mono 24/48 kHz')
   if (!response.body) throw new Error('Streaming is not supported in this browser')
   const reader = response.body.getReader()
   let carry: number | null = null

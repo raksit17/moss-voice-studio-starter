@@ -58,7 +58,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 }
 
 export const getHealth = () => request<Health>('/v1/health')
-export interface StreamStatus { configured: boolean; ready: boolean; reason: string | null }
+export interface StreamStatus { configured: boolean; ready: boolean; reason: string | null; engines?: { moss?: { ready?: boolean }; 'chatterbox-turbo'?: { configured?: boolean; ready?: boolean; sample_rate?: number; mode?: string; reason?: string | null } } }
 export const getStreamStatus = () => request<StreamStatus>('/v1/stream/status')
 export const getVoices = async () => (await request<{ items: Voice[] }>('/v1/voices')).items
 export const getJobs = async () => (await request<{ items: Job[] }>('/v1/jobs')).items
@@ -95,11 +95,12 @@ export async function streamSpeech(
   instructions: string,
   signal: AbortSignal,
   settings: GenerationSettings,
+  engine: 'moss' | 'chatterbox-turbo' = 'moss',
 ): Promise<Response> {
   const response = await fetch(BASE_URL + '/v1/stream', {
     method: 'POST',
     headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, language, voice_id: voiceId, instructions: instructions || null, ...settings }),
+    body: JSON.stringify({ text, language, voice_id: voiceId, engine, ...(engine === 'moss' ? { instructions: instructions || null, ...settings } : {}) }),
     signal,
   })
   if (!response.ok) {

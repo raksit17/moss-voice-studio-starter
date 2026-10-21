@@ -313,9 +313,14 @@ async function copy(textToCopy: string) {
 }
 async function liveSpeak() {
   if (!text.value.trim() || liveActive.value) return
-  if (runtimeMode.value !== 'moss') return alertMessage('Streaming รองรับเฉพาะ MOSS/SGLang; Chatterbox-Turbo ใช้ WAV jobs', 'error')
-  if (!liveStatus.value?.ready) {
-    alertMessage('ต้องเปิด SGLang-Omni และตั้งค่า SGLANG_BASE_URL ก่อน', 'error')
+  if (runtimeMode.value === 'f5') return alertMessage('F5 ไม่มี PCM Streaming ในโหมดนี้', 'error')
+  const ready = runtimeMode.value === 'chatterbox-turbo'
+    ? liveStatus.value?.engines?.['chatterbox-turbo']?.ready
+    : liveStatus.value?.ready
+  if (!ready) {
+    alertMessage(runtimeMode.value === 'chatterbox-turbo'
+      ? 'กด Load / Warm Turbo ที่หน้า Model ก่อนใช้ Sentence Streaming'
+      : 'ต้องเปิด SGLang-Omni และตั้งค่า SGLANG_BASE_URL ก่อน', 'error')
     return
   }
   liveAbort = new AbortController()
@@ -327,7 +332,8 @@ async function liveSpeak() {
     // Resume on the button gesture to satisfy browser autoplay permissions.
     await ctx.resume()
     const response = await streamSpeech(text.value.trim(), language.value,
-      selectedVoice.value || null, liveInstructions.value, liveAbort.signal, generationSettings())
+      selectedVoice.value || null, liveInstructions.value, liveAbort.signal, generationSettings(),
+      runtimeMode.value === 'chatterbox-turbo' ? 'chatterbox-turbo' : 'moss')
     await playPcmResponse(response, ctx, liveAbort.signal, bytes => {
       liveBytes.value += bytes
     })
@@ -441,15 +447,15 @@ onUnmounted(() => {
               <div class="field-label field-label-space">Quick prompts <span>Click to try</span></div>
               <div class="prompt-row"><button v-for="prompt in examples" :key="prompt.name" @click="text=prompt.text">{{ prompt.name }}</button></div>
               <div class="editor-divider"></div>
-              <div class="stream-params"><label for="live-style">Streaming style hint (optional)</label><input id="live-style" v-model="liveInstructions" maxlength="240" placeholder="e.g. warm, gentle, cheerful" /><span>{{ liveStatus?.ready ? "● SGLang ready · progressive PCM 48 kHz mono" : "○ Streaming requires SGLang-Omni server" }}</span></div><div class="action-row"><div class="quality-mark"><ShieldCheck :size="17"/><div><strong>{{ runtimeMode === 'f5' ? '24 kHz · WAV (F5)' : runtimeMode === 'chatterbox-turbo' ? 'Chatterbox-Turbo · WAV' : '48 kHz · Stereo WAV' }}</strong><span>High fidelity audio output</span></div></div><button class="button primary generate-btn" :disabled="creating || isBusy || !text.trim()" @click="generate"><Waves v-if="!creating && !isBusy" :size="18"/><RefreshCcw v-else :size="18" class="spin"/>{{ creating || isBusy ? 'Generating...' : 'Generate Speech' }}</button></div>
+              <div class="stream-params"><label for="live-style">Streaming style hint (optional)</label><input id="live-style" v-model="liveInstructions" maxlength="240" placeholder="e.g. warm, gentle, cheerful" /><span>{{ runtimeMode === 'chatterbox-turbo' ? (liveStatus?.engines?.['chatterbox-turbo']?.ready ? '● Turbo ready · sentence PCM 24 kHz mono' : '○ Load / Warm Turbo to enable sentence streaming') : (liveStatus?.ready ? '● SGLang ready · progressive PCM 48 kHz mono' : '○ Streaming requires SGLang-Omni server') }}</span></div><div class="action-row"><div class="quality-mark"><ShieldCheck :size="17"/><div><strong>{{ runtimeMode === 'f5' ? '24 kHz · WAV (F5)' : runtimeMode === 'chatterbox-turbo' ? 'Chatterbox-Turbo · WAV' : '48 kHz · Stereo WAV' }}</strong><span>High fidelity audio output</span></div></div><button class="button primary generate-btn" :disabled="creating || isBusy || !text.trim()" @click="generate"><Waves v-if="!creating && !isBusy" :size="18"/><RefreshCcw v-else :size="18" class="spin"/>{{ creating || isBusy ? 'Generating...' : 'Generate Speech' }}</button></div>
               <div class="stream-actions">
-                <button v-if="!liveActive" class="button secondary" :disabled="!text.trim() || !liveStatus?.ready || runtimeMode !== 'moss'" @click="liveSpeak">
+                <button v-if="!liveActive" class="button secondary" :disabled="!text.trim() || (runtimeMode === 'chatterbox-turbo' ? !liveStatus?.engines?.['chatterbox-turbo']?.ready : runtimeMode !== 'moss' || !liveStatus?.ready)" @click="liveSpeak">
                   <Zap :size="17"/> Stream Speech (Live)
                 </button>
                 <button v-else class="button secondary" @click="stopLive">
                   <Pause :size="17"/> Stop live audio
                 </button>
-                <span class="stream-progress">{{ liveActive ? 'Playing progressive PCM · ' + Math.round(liveBytes / 1024) + ' KB received' : 'WAV mode remains available offline from SGLang' }}</span>
+                <span class="stream-progress">{{ liveActive ? 'Playing progressive PCM · ' + Math.round(liveBytes / 1024) + ' KB received' : 'WAV mode remains available' }}</span>
               </div>
             </section>
 
@@ -595,7 +601,7 @@ onUnmounted(() => {
           </section>
         </template>
 
-        <template v-if="page === 'api'"><div class="page-header"><div><div class="eyebrow"><Code2 :size="14"/> DEVELOPER TOOLS</div><h1>API <em>Integration.</em></h1><p>เรียกใช้ Voice Studio จาก Anime AI Companion หรือแอปอื่น ๆ ด้วย HTTP API</p></div></div><div class="panel details-panel"><div class="results-heading"><h2><KeyRound :size="20" class="heading-icon"/> Local API</h2><span class="waiting-tag">REST · WAV / Live PCM</span></div><div class="endpoint"><span class="method post">POST</span><code>/v1/jobs</code><button class="icon-button" @click="copy('/v1/jobs')"><Copy :size="16"/></button></div><p class="section-desc">ส่งข้อความ ภาษา และ Voice ID จากคลังเสียง คืน Job ID เพื่อใช้ตรวจสถานะ</p><div class="code-head"><span>REQUEST BODY</span><button @click="copy(JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2))"><Copy :size="14"/> Copy</button></div><pre class="code-block">{{ JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2) }}</pre><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id/audio</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/chatterbox/status</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/chatterbox/load</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/chatterbox/unload</code></div><p class="section-desc">For Chatterbox-Turbo WAV jobs use engine: chatterbox-turbo and language: English. Pick a voice_id to clone an existing authorized WAV profile.</p><div class="endpoint"><span class="method post">POST</span><code>/v1/stream</code></div><p class="section-desc">SGLang-Omni progressive audio stream: raw PCM s16le mono 48 kHz, with language, voice_id, and optional instructions.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/stream/status</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/voice-models</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voice-models</code></div><p class="section-desc">Build from a completed job or Voice Profile; generate with voice_model_id and without MOSS model_id.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/voices</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voices</code></div><div class="model-note"><ShieldCheck :size="18"/><div><strong>Authentication</strong><p>ทุก request ต้องมี header <code>X-API-Key</code> สำหรับการใช้งานจริง ให้เรียกผ่าน Backend-to-Backend ไม่ควรฝัง secret ในเว็บที่เปิดสาธารณะ</p></div></div></div></template>
+        <template v-if="page === 'api'"><div class="page-header"><div><div class="eyebrow"><Code2 :size="14"/> DEVELOPER TOOLS</div><h1>API <em>Integration.</em></h1><p>เรียกใช้ Voice Studio จาก Anime AI Companion หรือแอปอื่น ๆ ด้วย HTTP API</p></div></div><div class="panel details-panel"><div class="results-heading"><h2><KeyRound :size="20" class="heading-icon"/> Local API</h2><span class="waiting-tag">REST · WAV / Live PCM</span></div><div class="endpoint"><span class="method post">POST</span><code>/v1/jobs</code><button class="icon-button" @click="copy('/v1/jobs')"><Copy :size="16"/></button></div><p class="section-desc">ส่งข้อความ ภาษา และ Voice ID จากคลังเสียง คืน Job ID เพื่อใช้ตรวจสถานะ</p><div class="code-head"><span>REQUEST BODY</span><button @click="copy(JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2))"><Copy :size="14"/> Copy</button></div><pre class="code-block">{{ JSON.stringify({text:'สวัสดีค่ะ', language:'Thai', voice_id: selectedVoice || null},null,2) }}</pre><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/jobs/:id/audio</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/chatterbox/status</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/chatterbox/load</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/chatterbox/unload</code></div><p class="section-desc">For Chatterbox-Turbo WAV jobs use engine: chatterbox-turbo and language: English. Pick a voice_id to clone an existing authorized WAV profile.</p><div class="endpoint"><span class="method post">POST</span><code>/v1/stream</code></div><p class="section-desc">MOSS engine: SGLang progressive PCM mono 48 kHz. Chatterbox-Turbo engine: English-only progressive sentence PCM mono 24 kHz (the model still generates a full waveform per sentence).</p><div class="endpoint"><span class="method get">GET</span><code>/v1/stream/status</code></div><div class="endpoint"><span class="method get">GET</span><code>/v1/voice-models</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voice-models</code></div><p class="section-desc">Build from a completed job or Voice Profile; generate with voice_model_id and without MOSS model_id.</p><div class="endpoint"><span class="method get">GET</span><code>/v1/voices</code></div><div class="endpoint"><span class="method post">POST</span><code>/v1/voices</code></div><div class="model-note"><ShieldCheck :size="18"/><div><strong>Authentication</strong><p>ทุก request ต้องมี header <code>X-API-Key</code> สำหรับการใช้งานจริง ให้เรียกผ่าน Backend-to-Backend ไม่ควรฝัง secret ในเว็บที่เปิดสาธารณะ</p></div></div></div></template>
         <footer class="page-footer"><span>MOSS Voice Studio · Built for local AI creativity</span><span>Open-source model · Phase 3</span></footer>
       </div>
     </main>

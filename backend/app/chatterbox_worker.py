@@ -104,11 +104,17 @@ def _handle(command):
     model = _load()
     import torch
     import soundfile as sf
+    generation = command.get("generation") or {}
+    params = {
+        "temperature": float(generation.get("temperature", 0.8)),
+        "top_p": float(generation.get("top_p", 0.95)),
+        "top_k": int(generation.get("top_k", 1000)),
+    }
     with torch.inference_mode():
         if reference:
-            waveform = model.generate(content, audio_prompt_path=reference)
+            waveform = model.generate(content, audio_prompt_path=reference, **params)
         else:
-            waveform = model.generate(content)
+            waveform = model.generate(content, **params)
     audio = waveform.detach().float().cpu().numpy()
     if audio.ndim == 2:
         audio = audio.T
