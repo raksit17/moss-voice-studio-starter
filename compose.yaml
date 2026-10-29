@@ -1,0 +1,51 @@
+name: moss-voice-studio
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      # Localhost only: the browser frontend includes an API key.
+      - "127.0.0.1:8001:8001"
+    environment:
+      API_KEY: ${STUDIO_API_KEY:-local-dev-key}
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8001"
+      ALLOWED_ORIGINS: http://127.0.0.1:5175,http://localhost:5175
+      DATA_DIR: /app/data
+      MODELS_DIR: /app/models
+      HF_HOME: /cache/huggingface
+      CHATTERBOX_PYTHON: /opt/venvs/chatterbox/bin/python
+      CHATTERBOX_DEVICE: cuda
+      CHATTERBOX_TIMEOUT_SECONDS: "600"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - studio-data:/app/data
+      - hf-cache:/cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # This must be a host/browser URL, not http://api:8001.
+        VITE_API_URL: http://127.0.0.1:8001
+        VITE_API_KEY: ${STUDIO_API_KEY:-local-dev-key}
+    ports:
+      - "127.0.0.1:5175:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  studio-data:
+  hf-cache:

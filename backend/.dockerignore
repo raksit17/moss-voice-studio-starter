@@ -1,0 +1,13 @@
+.venv/
+.venv-*/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/
+models/
+tests/
+test-output.wav
+.env
+.env.*
+*.log

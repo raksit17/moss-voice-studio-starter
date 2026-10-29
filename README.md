@@ -214,3 +214,7 @@ powershell -ExecutionPolicy Bypass -File .\\install-chatterbox.ps1
 The installer creates an isolated Python 3.14 Chatterbox venv, installs PyTorch CUDA 12.8 wheels and applies a **local metadata-only workaround** for upstream `spacy-pkuseg` (Chinese segmentation; not needed by English Turbo). For Python 3.11, use `py -3.11 -m venv .venv-chatterbox` and install `requirements-chatterbox.txt` normally. MOSS/F5 environments remain unchanged.
 
 Start the existing API and frontend as before. In Voice Playground choose **Chatterbox-Turbo · English**, upload a consented ~10-second English WAV in Voice Library, select its profile and generate. For a warm first response, use **Model Manager → Load / Warm Turbo**. CPU fallback can be configured with `CHATTERBOX_DEVICE=cpu`; the default `auto` prefers CUDA. For troubleshooting see [Chatterbox-Turbo setup & API](docs/CHATTERBOX_TURBO.md).
+
+## Docker Compose (Chatterbox-Turbo GPU + Web)
+
+Run the Chatterbox-Turbo (English) API in a Linux CUDA container on **localhost:8001** and the production Vue web UI on **localhost:5175** using `docker compose up -d --build`. Docker Desktop must use WSL2/Linux containers with NVIDIA GPU access. MOSS/F5 are **not** included in this Docker image. See [Docker setup and troubleshooting](docs/DOCKER.md).
