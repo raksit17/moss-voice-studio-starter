@@ -42,3 +42,12 @@ jobs:
         run: npm install
       - name: Typecheck and build
         run: npm run build
+
+  docker-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate standalone Docker Compose configuration
+        run: |
+          cp backend/.env.example backend/.env
+          docker compose -f docker-compose.yml config --quiet
