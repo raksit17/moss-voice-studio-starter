@@ -1,5 +1,9 @@
 # MOSS Voice Studio — Phase 3: Local Thai/English TTS + Progressive Streaming
 
+## MCP + Redis + Docker integration
+
+คู่มือติดตั้งและเชื่อมสอง repo: [MCP / Redis / Docker (ภาษาไทย)](docs/MCP-REDIS-DOCKER.md). Companion ใช้ REST gateway เดิม พร้อม MCP tools และ Redis/SSE event interfaces เพิ่มเติม; MOSS inference รันบน Windows host.
+
 A standalone **Voice Library + TTS Playground + REST API** using **MOSS-TTS-Local-Transformer-v1.5**. Built for experimenting with cloned voices and integrating with apps such as anime-ai-companion. The model weights are **not bundled**.
 
 ## Features
