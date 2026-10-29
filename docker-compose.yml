@@ -1,0 +1,62 @@
+# Standalone Studio. From this repository root:
+# docker compose up -d --build
+# Requires backend/.env; see docs/DOCKER-COMPOSE.md.
+services:
+  moss-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        INSTALL_CHATTERBOX: ${MOSS_INSTALL_CHATTERBOX:-true}
+    env_file:
+      - ./backend/.env
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8001
+      DATA_DIR: /app/data
+      MODELS_DIR: /app/models
+      CHATTERBOX_PYTHON: /opt/chatterbox/bin/python
+    # Docker Desktop / WSL2 needs NVIDIA GPU support for actual inference.
+    gpus: all
+    ports:
+      - "127.0.0.1:${MOSS_BACKEND_PORT:-8001}:8001"
+    volumes:
+      - ./backend/data:/app/data
+      - ./backend/models:/app/models
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; req=urllib.request.Request('http://127.0.0.1:8001/v1/health',headers={'X-API-Key':os.environ['API_KEY']}); urllib.request.urlopen(req,timeout=5).close()"]
+      interval: 15s
+      timeout: 8s
+      start_period: 30s
+      retries: 8
+    restart: unless-stopped
+    networks:
+      default:
+      moss-shared:
+        aliases:
+          - moss-backend
+
+  moss-web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      # Expand only API_KEY, leaving Nginx $uri/$host intact.
+      NGINX_ENVSUBST_FILTER: "^API_KEY$"
+    ports:
+      - "127.0.0.1:${MOSS_WEB_PORT:-5176}:80"
+    depends_on:
+      moss-backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  moss-shared:
+    # Companion's optional Docker override joins this shared network.
+    name: moss-voice-shared
+
+volumes:
+  hf-cache:
