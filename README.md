@@ -1,8 +1,17 @@
 # MOSS Voice Studio — Phase 3: Local Thai/English TTS + Progressive Streaming
 
+## Standalone MOSS Docker Compose (optional GPU inference)
+
+เริ่ม MOSS Backend + Vue Studio ผ่าน Docker ได้จาก root repo โดยอ่าน [คู่มือ Docker Compose](docs/DOCKER-COMPOSE.md) ก่อนใช้งาน ต้องตั้ง `backend/.env` และเตรียม NVIDIA GPU/WSL2; Chatterbox แยก Python venv ภายใน Docker ส่วนเว็บ Nginx proxy จะไม่ฝัง API key ลง bundle. ใช้ร่วมกับ `anime-ai-companion` ผ่าน shared Docker network `moss-voice-shared` และ `docker-compose.moss.yml` ของ Companion ได้ (เริ่ม MOSS ก่อน). การย้าย SQLite/voice library เดิมจาก Windows ต้องตรวจ absolute paths ก่อน.
+
+```powershell
+# Run from moss-voice-studio-starter repository root
+docker compose up -d --build
+```
+
 ## MCP + Redis + Docker integration
 
-คู่มือติดตั้งและเชื่อมสอง repo: [MCP / Redis / Docker (ภาษาไทย)](docs/MCP-REDIS-DOCKER.md). Companion ใช้ REST gateway เดิม พร้อม MCP tools และ Redis/SSE event interfaces เพิ่มเติม; MOSS inference รันบน Windows host.
+คู่มือติดตั้งและเชื่อมสอง repo: [MCP / Redis / Docker (ภาษาไทย)](docs/MCP-REDIS-DOCKER.md). Companion ใช้ REST gateway เดิม พร้อม MCP tools และ Redis/SSE event interfaces เพิ่มเติม; โดยค่าเริ่มต้น MOSS inference รันบน Windows host หรือเลือกใช้ Docker standalone ที่เพิ่มใหม่ได้ตามคู่มือด้านล่าง.
 
 A standalone **Voice Library + TTS Playground + REST API** using **MOSS-TTS-Local-Transformer-v1.5**. Built for experimenting with cloned voices and integrating with apps such as anime-ai-companion. The model weights are **not bundled**.
 
