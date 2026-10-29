@@ -32,7 +32,7 @@ class ChatterboxRuntime:
             path = BACKEND_DIR / ".venv-chatterbox" / "Scripts" / "python.exe"
         else:
             path = BACKEND_DIR / ".venv-chatterbox" / "bin" / "python"
-        return path.resolve()
+        # A venv's bin/python is commonly a symlink to the system executable.\n        # Resolving it escapes the venv and loses its site-packages.\n        return path.absolute()
 
     def status(self):
         # Do not acquire the inference lock: UI polls while a long job is running.
